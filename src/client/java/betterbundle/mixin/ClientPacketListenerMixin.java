@@ -5,7 +5,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.client.multiplayer.ClientPacketListener;
-import net.minecraft.network.protocol.game.ClientboundContainerOpenPacket;
+import net.minecraft.network.protocol.game.ClientboundOpenScreenPacket;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -20,16 +20,16 @@ public abstract class ClientPacketListenerMixin {
     private static Screen previousScreen;
     private static boolean opRequested = false;
 
-    @Inject(method = "handleContainerOpen", at = @At("HEAD"))
-    private void onContainerOpenHead(ClientboundContainerOpenPacket packet, CallbackInfo ci) {
+    @Inject(method = "handleOpenScreen", at = @At("HEAD"))
+    private void onContainerOpenHead(ClientboundOpenScreenPacket packet, CallbackInfo ci) {
         if (ShulkerBoxOps.isBusy() && !opRequested) {
             previousScreen = Minecraft.getInstance().screen;
             opRequested = true;
         }
     }
 
-    @Inject(method = "handleContainerOpen", at = @At("TAIL"))
-    private void onContainerOpenTail(ClientboundContainerOpenPacket packet, CallbackInfo ci) {
+    @Inject(method = "handleOpenScreen", at = @At("TAIL"))
+    private void onContainerOpenTail(ClientboundOpenScreenPacket packet, CallbackInfo ci) {
         if (!opRequested || !ShulkerBoxOps.isBusy()) {
             opRequested = false;
             return;

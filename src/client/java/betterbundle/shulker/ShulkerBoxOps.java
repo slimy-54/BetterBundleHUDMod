@@ -1,10 +1,7 @@
 package betterbundle.shulker;
 
-import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
-import net.minecraft.network.HashedStack;
-import net.minecraft.network.protocol.game.ServerboundContainerClickPacket;
 import net.minecraft.network.protocol.game.ServerboundContainerClosePacket;
 import net.minecraft.network.protocol.game.ServerboundSelectBundleItemPacket;
 import net.minecraft.world.entity.player.Player;
@@ -13,6 +10,8 @@ import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.inventory.ShulkerBoxMenu;
 import net.minecraft.world.item.ItemStack;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import betterbundle.util.BundleContentsHelper;
 
@@ -26,6 +25,9 @@ import betterbundle.util.BundleContentsHelper;
  *  - no empty slot   -> falls back to a bundle inside the box
  */
 public final class ShulkerBoxOps {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger("betterbundle.ShulkerBoxOps");
+    private static final boolean DEBUG = true;
 
     private ShulkerBoxOps() {}
 
@@ -89,6 +91,8 @@ public final class ShulkerBoxOps {
             abort();
             return;
         }
+        if (DEBUG) LOGGER.info("[betterbundle] onBoxMenuOpened op={} containerId={} stateId={} ({} slots)",
+                pendingOp, containerIdWhenOpened, menu.getStateId(), menu.slots.size());
         try {
             switch (pendingOp) {
                 case TAKE_BOX -> runTakeBox(player, conn);
@@ -97,6 +101,7 @@ public final class ShulkerBoxOps {
                 default -> abort();
             }
         } catch (Throwable t) {
+            if (DEBUG) LOGGER.error("[betterbundle] op {} threw", pendingOp, t);
             abort();
         } finally {
             if (pendingOp != Op.NONE) {
@@ -109,11 +114,11 @@ public final class ShulkerBoxOps {
     private static void runTakeBox(Player player, ClientPacketListener conn) {
         int containerId = containerIdWhenOpened;
         // pick up the whole stack from the box slot into cursor
-        conn.send(makeClickPacket(containerId, boxSlotIndex, (byte) 0));
+        sendPick(containerId, boxSlotIndex, (byte) 0, player);
         // drop cursor into the first free player slot of the opened menu
         int emptySlot = findEmptyPlayerSlot(player);
         if (emptySlot >= 0) {
-            conn.send(makeClickPacket(containerId, emptySlot, (byte) 0));
+            sendPick(containerId, emptySlot, (byte) 0, player);
         }
     }
 
@@ -121,10 +126,10 @@ public final class ShulkerBoxOps {
         int containerId = containerIdWhenOpened;
         // select the inner bundle item, then pull one into cursor
         conn.send(new ServerboundSelectBundleItemPacket(boxSlotIndex, innerIndex));
-        conn.send(makeClickPacket(containerId, boxSlotIndex, (byte) 1));
+        sendPick(containerId, boxSlotIndex, (byte) 1, player);
         int emptySlot = findEmptyPlayerSlot(player);
         if (emptySlot >= 0) {
-            conn.send(makeClickPacket(containerId, emptySlot, (byte) 0));
+            sendPick(containerId, emptySlot, (byte) 0, player);
         }
     }
 
@@ -138,23 +143,32 @@ public final class ShulkerBoxOps {
             // stackable -> try a bundle inside the box first
             int bundleSlot = findBundleInBox(player, cursor);
             if (bundleSlot >= 0) {
-                conn.send(makeClickPacket(containerId, bundleSlot, (byte) 0));
+                sendPick(containerId, bundleSlot, (byte) 0, player);
                 return;
             }
         }
         // non-stackable (or no fitting bundle) -> empty box slot
         int emptyBoxSlot = findEmptyBoxSlot(player);
         if (emptyBoxSlot >= 0) {
-            conn.send(makeClickPacket(containerId, emptyBoxSlot, (byte) 0));
+            sendPick(containerId, emptyBoxSlot, (byte) 0, player);
             return;
         }
         // box full -> fall back to a bundle inside the box
         int bundleSlot = findBundleInBox(player, cursor);
         if (bundleSlot >= 0) {
-            conn.send(makeClickPacket(containerId, bundleSlot, (byte) 0));
+            sendPick(containerId, bundleSlot, (byte) 0, player);
         } else {
             abort();
         }
+    }
+
+    /** Send a vanilla PICKUP click through the canonical client path so the client
+     *  menu (slots/carried/changedSlots/stateId) stays in sync with the server. */
+    private static void sendPick(int containerId, int slot, byte button, Player player) {
+        if (DEBUG) LOGGER.info("[betterbundle] click containerId={} slot={} button={} (stateId {})",
+                containerId, slot, button, player.containerMenu.getStateId());
+        Minecraft.getInstance().gameMode.handleContainerInput(
+                containerId, slot, button, ContainerInput.PICKUP, player);
     }
 
     private static int findEmptyBoxSlot(Player player) {
@@ -195,11 +209,5 @@ public final class ShulkerBoxOps {
 
     private static void abort() {
         pendingOp = Op.NONE;
-    }
-
-    private static ServerboundContainerClickPacket makeClickPacket(int containerId, int slot, byte button) {
-        return new ServerboundContainerClickPacket(
-                containerId, -1, (short) slot, button,
-                ContainerInput.PICKUP, new Int2ObjectOpenHashMap<>(), HashedStack.EMPTY);
     }
 }

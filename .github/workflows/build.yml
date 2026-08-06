@@ -10,21 +10,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - mc: "26.1"
-            minecraft_version: "26.1"
-            loader_version: "0.19.2"
-            loom_version: "1.16-SNAPSHOT"
-            fabric_api_version: "0.145.1+26.1"
-          - mc: "26.2"
-            minecraft_version: "26.2"
-            loader_version: "0.19.3"
-            loom_version: "1.17.18"
-            fabric_api_version: "0.156.0+26.2"
-    name: "Build MC ${{ matrix.mc }}"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -38,12 +23,11 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
-      - name: Build with Gradle (${{ matrix.mc }})
-        working-directory: .
-        run: ./gradlew build -Pminecraft_version=${{ matrix.minecraft_version }} -Ploader_version=${{ matrix.loader_version }} -Ploom_version=${{ matrix.loom_version }} -Pfabric_api_version=${{ matrix.fabric_api_version }}
+      - name: Build with Gradle
+        run: ./gradlew build
 
-      - name: Upload build artifacts (MC ${{ matrix.mc }})
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: better-bundle-mc${{ matrix.mc }}
+          name: better-bundle-build
           path: build/libs/

@@ -20,7 +20,6 @@ import java.util.List;
 import java.util.Locale;
 
 import betterbundle.util.BundleContentsHelper;
-import betterbundle.util.MinecraftScreenHelper;
 
 public final class BundlePanelRenderer {
 
@@ -153,7 +152,7 @@ public final class BundlePanelRenderer {
 
     public static boolean isRecipeBookOpen() {
         Minecraft client = Minecraft.getInstance();
-        if (MinecraftScreenHelper.getCurrentScreen(client) instanceof AbstractRecipeBookScreen<?> screen) return screen.recipeBookComponent.isVisible();
+        if (client.screen instanceof AbstractRecipeBookScreen<?> screen) return screen.recipeBookComponent.isVisible();
         return false;
     }
 

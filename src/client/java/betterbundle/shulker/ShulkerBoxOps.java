@@ -37,6 +37,7 @@ public final class ShulkerBoxOps {
     private static int invIndex;
     private static int boxSlotIndex;
     private static int innerIndex;
+    private static int takeCount;                 // taken to cursor/inventory; <=0 -> whole source stack
     private static int containerIdWhenOpened = -1;
 
     /** Whether a shulker-box operation is currently in flight (locks panel interactions). */
@@ -44,23 +45,27 @@ public final class ShulkerBoxOps {
 
     // ---- requesters (client-thread) ------------------------------------
 
-    /** Take the whole stack at the given box slot out into the player inventory. */
-    public static void takeFromBox(int inventoryIndex, int boxSlot) {
+    /** Take {@code count} items from the box slot out into the player inventory
+     *  (count <= 0 means take the whole slot). */
+    public static void takeFromBox(int inventoryIndex, int boxSlot, int count) {
         if (!ShulkerSupport.isLoaded() || pendingOp != Op.NONE) return;
         pendingOp = Op.TAKE_BOX;
         invIndex = inventoryIndex;
         boxSlotIndex = boxSlot;
         innerIndex = -1;
+        takeCount = count;
         sendOpenAndWait(inventoryIndex);
     }
 
-    /** Take the given inner item out of a bundle located at boxSlot inside the box. */
-    public static void takeFromInnerBundle(int inventoryIndex, int boxSlot, int bundleInnerIndex) {
+    /** Take {@code count} of the given inner item out of a bundle located at boxSlot
+     *  inside the box (count <= 0 means as much as the inner item grouping allows). */
+    public static void takeFromInnerBundle(int inventoryIndex, int boxSlot, int bundleInnerIndex, int count) {
         if (!ShulkerSupport.isLoaded() || pendingOp != Op.NONE) return;
         pendingOp = Op.TAKE_INNER;
         invIndex = inventoryIndex;
         boxSlotIndex = boxSlot;
         innerIndex = bundleInnerIndex;
+        takeCount = count;
         sendOpenAndWait(inventoryIndex);
     }
 
@@ -71,6 +76,7 @@ public final class ShulkerBoxOps {
         invIndex = inventoryIndex;
         boxSlotIndex = -1;
         innerIndex = -1;
+        takeCount = 0;
         sendOpenAndWait(inventoryIndex);
     }
 
@@ -113,20 +119,35 @@ public final class ShulkerBoxOps {
 
     private static void runTakeBox(Player player, ClientPacketListener conn) {
         int containerId = containerIdWhenOpened;
-        // pick up the whole stack from the box slot into cursor
-        sendPick(containerId, boxSlotIndex, (byte) 0, player);
-        // drop cursor into the first free player slot of the opened menu
-        int emptySlot = findEmptyPlayerSlot(player);
-        if (emptySlot >= 0) {
-            sendPick(containerId, emptySlot, (byte) 0, player);
+        if (takeCount <= 0) {
+            // take whole slot -> move everything into the first free player slot
+            sendPick(containerId, boxSlotIndex, (byte) 0, player);
+            int emptySlot = findEmptyPlayerSlot(player);
+            if (emptySlot >= 0) {
+                sendPick(containerId, emptySlot, (byte) 0, player);
+            }
+        } else {
+            // partial: pick the whole slot, drop `takeCount` one-by-one into a free slot,
+            // then put the remainder back into the source slot
+            sendPick(containerId, boxSlotIndex, (byte) 0, player);
+            int emptySlot = findEmptyPlayerSlot(player);
+            if (emptySlot >= 0) {
+                for (int i = 0; i < takeCount; i++) {
+                    sendPick(containerId, emptySlot, (byte) 1, player);
+                }
+                sendPick(containerId, boxSlotIndex, (byte) 0, player);
+            }
         }
     }
 
     private static void runTakeInner(Player player, ClientPacketListener conn) {
         int containerId = containerIdWhenOpened;
-        // select the inner bundle item, then pull one into cursor
-        conn.send(new ServerboundSelectBundleItemPacket(boxSlotIndex, innerIndex));
-        sendPick(containerId, boxSlotIndex, (byte) 1, player);
+        // select the inner bundle item, then pull one into the (bundle's) cursor each time
+        int amount = takeCount <= 0 ? 64 : takeCount;
+        for (int i = 0; i < amount; i++) {
+            conn.send(new ServerboundSelectBundleItemPacket(boxSlotIndex, innerIndex));
+            sendPick(containerId, boxSlotIndex, (byte) 1, player);
+        }
         int emptySlot = findEmptyPlayerSlot(player);
         if (emptySlot >= 0) {
             sendPick(containerId, emptySlot, (byte) 0, player);

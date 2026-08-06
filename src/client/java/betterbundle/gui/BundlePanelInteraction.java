@@ -77,11 +77,14 @@ public final class BundlePanelInteraction {
 
         BundlePanelRenderer.PanelItemSource source = clicked.source();
         if (source == BundlePanelRenderer.PanelItemSource.SHULKER_BOX) {
-            ShulkerBoxOps.takeFromBox(clicked.shulkerInvIndex(), clicked.boxSlot());
+            // whole stack on left, exactly 1 on right
+            int count = (button == 0) ? -1 : 1; // -1 = whole source stack
+            ShulkerBoxOps.takeFromBox(clicked.shulkerInvIndex(), clicked.boxSlot(), count);
             return true;
         }
         if (source == BundlePanelRenderer.PanelItemSource.SHULKER_INNER_BUNDLE) {
-            ShulkerBoxOps.takeFromInnerBundle(clicked.shulkerInvIndex(), clicked.boxSlot(), clicked.itemIndex());
+            int count = (button == 0) ? -1 : 1;
+            ShulkerBoxOps.takeFromInnerBundle(clicked.shulkerInvIndex(), clicked.boxSlot(), clicked.itemIndex(), count);
             return true;
         }
 
@@ -109,7 +112,18 @@ public final class BundlePanelInteraction {
                 connection.send(makeClickPacket(containerId, bundleSlot, (byte) 1));
             }
             connection.send(makeClickPacket(containerId, emptySlot, (byte) 0));
+        } else if (button == 0) {
+            // left-click: take the whole inner stack group into a free inventory slot
+            int emptySlot = findEmptyPlayerSlot(player);
+            if (emptySlot < 0) return true;
+            int count = clicked.stack().getCount();
+            for (int i = 0; i < count; i++) {
+                connection.send(new ServerboundSelectBundleItemPacket(bundleSlot, clicked.itemIndex()));
+                connection.send(makeClickPacket(containerId, bundleSlot, (byte) 1));
+            }
+            connection.send(makeClickPacket(containerId, emptySlot, (byte) 0));
         } else {
+            // right-click: take exactly 1 into the cursor
             connection.send(new ServerboundSelectBundleItemPacket(bundleSlot, clicked.itemIndex()));
             connection.send(makeClickPacket(containerId, bundleSlot, (byte) 1));
         }

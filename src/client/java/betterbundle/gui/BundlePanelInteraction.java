@@ -14,6 +14,8 @@ import org.lwjgl.glfw.GLFW;
 
 import java.util.List;
 
+import betterbundle.shulker.ShulkerBoxOps;
+import betterbundle.shulker.ShulkerSupport;
 import betterbundle.util.BundleContentsHelper;
 
 public final class BundlePanelInteraction {
@@ -37,7 +39,7 @@ public final class BundlePanelInteraction {
     private static BundlePanelRenderer.FlatItem getClickedItem(double mouseX, double mouseY,
                                                                 int leftPos, int topPos) {
         List<BundlePanelRenderer.BundleSlotEntry> bundles = BundlePanelRenderer.getBundles();
-        if (bundles.isEmpty()) return null;
+        if (bundles.isEmpty() && !BundlePanelRenderer.hasAnyContent()) return null;
 
         List<BundlePanelRenderer.FlatItem> allItems = BundlePanelRenderer.buildFlatItemList(bundles);
         if (allItems.isEmpty()) return null;
@@ -72,6 +74,16 @@ public final class BundlePanelInteraction {
         Minecraft client = Minecraft.getInstance();
         Player player = client.player;
         if (player == null) return false;
+
+        BundlePanelRenderer.PanelItemSource source = clicked.source();
+        if (source == BundlePanelRenderer.PanelItemSource.SHULKER_BOX) {
+            ShulkerBoxOps.takeFromBox(clicked.shulkerInvIndex(), clicked.boxSlot());
+            return true;
+        }
+        if (source == BundlePanelRenderer.PanelItemSource.SHULKER_INNER_BUNDLE) {
+            ShulkerBoxOps.takeFromInnerBundle(clicked.shulkerInvIndex(), clicked.boxSlot(), clicked.itemIndex());
+            return true;
+        }
 
         ClientPacketListener connection = client.getConnection();
         if (connection == null) return false;
@@ -136,7 +148,16 @@ public final class BundlePanelInteraction {
                 break;
             }
         }
-        if (targetBundleSlot < 0) return false;
+        if (targetBundleSlot < 0) {
+            // No fitting player bundle -> try depositing into a shulker box
+            for (BundlePanelRenderer.ShulkerEntry sh : BundlePanelRenderer.findShulkers()) {
+                if (ShulkerSupport.hasRoom(sh.boxStack(), stack)) {
+                    ShulkerBoxOps.deposit(sh.invIndex());
+                    return true;
+                }
+            }
+            return false;
+        }
 
         ClientPacketListener connection = client.getConnection();
         if (connection == null) return false;
@@ -207,7 +228,16 @@ public final class BundlePanelInteraction {
                 break;
             }
         }
-        if (targetBundleSlot < 0) return false;
+        if (targetBundleSlot < 0) {
+            // No fitting player bundle -> try depositing the cursor stack into a shulker box
+            for (BundlePanelRenderer.ShulkerEntry sh : BundlePanelRenderer.findShulkers()) {
+                if (ShulkerSupport.hasRoom(sh.boxStack(), cursor)) {
+                    ShulkerBoxOps.deposit(sh.invIndex());
+                    return true;
+                }
+            }
+            return false;
+        }
 
         ClientPacketListener connection = client.getConnection();
         if (connection == null) return false;

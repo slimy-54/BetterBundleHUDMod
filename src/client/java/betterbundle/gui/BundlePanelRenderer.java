@@ -7,7 +7,9 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.inventory.AbstractRecipeBookScreen;
+import net.minecraft.core.NonNullList;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.world.item.component.ItemContainerContents;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
@@ -19,6 +21,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 
+import betterbundle.shulker.ShulkerSupport;
 import betterbundle.util.BundleContentsHelper;
 
 public final class BundlePanelRenderer {
@@ -48,6 +51,19 @@ public final class BundlePanelRenderer {
     /** bundleSlot = container slot index (for clickSlot packets) */
     public record BundleSlotEntry(int bundleSlot, ItemStack bundleStack, BundleContents contents) {}
 
+    /** Source of a rendered panel item, determines how clicks are routed. */
+    public enum PanelItemSource {
+        /** item inside a bundle in the player inventory (vanilla bundle packets) */
+        PLAYER_BUNDLE,
+        /** item directly inside a shulker box in the player inventory */
+        SHULKER_BOX,
+        /** item inside a bundle which itself sits inside a shulker box */
+        SHULKER_INNER_BUNDLE
+    }
+
+    /** A shulker box in the player inventory, with its 27-slot contents. */
+    public record ShulkerEntry(int invIndex, int containerSlot, ItemStack boxStack, ItemContainerContents contents) {}
+
     public static int panelWidth() {
         return CAT_BAR_WIDTH + 2 + SCROLL_BAR_WIDTH + 2
                 + COLUMNS * (SLOT_SIZE + SLOT_SPACING) - SLOT_SPACING + PADDING * 2;
@@ -57,15 +73,16 @@ public final class BundlePanelRenderer {
     public static void scrollToTop() { scrollOffset = 0; }
 
     public static void scrollBy(int delta) {
+        if (!hasAnyContent()) { scrollOffset = 0; return; }
         List<BundleSlotEntry> bundles = getBundles();
-        if (bundles.isEmpty()) { scrollOffset = 0; return; }
         List<FlatItem> items = buildFlatItemList(bundles);
         int totalRows = (items.size() + COLUMNS - 1) / COLUMNS;
         int maxScroll = Math.max(0, totalRows - VISIBLE_ROWS);
         scrollOffset = Math.clamp(scrollOffset + delta, 0, maxScroll);
     }
 
-    public record FlatItem(int bundleSlot, int itemIndex, ItemStack stack) {}
+    public record FlatItem(PanelItemSource source, int bundleSlot, int itemIndex,
+                           int shulkerInvIndex, int boxSlot, ItemStack stack) {}
 
     public static List<FlatItem> buildFlatItemList(List<BundleSlotEntry> bundles) {
         List<FlatItem> result = new ArrayList<>();
@@ -73,8 +90,46 @@ public final class BundlePanelRenderer {
             if (entry.contents() == null) continue;
             List<ItemStack> items = entry.contents().itemCopyStream().toList();
             for (int i = 0; i < items.size(); i++) {
-                result.add(new FlatItem(entry.bundleSlot(), i, items.get(i)));
+                result.add(new FlatItem(PanelItemSource.PLAYER_BUNDLE, entry.bundleSlot(), i, -1, -1, items.get(i)));
             }
+        }
+        if (ShulkerSupport.isLoaded()) {
+            for (ShulkerEntry sh : findShulkers()) {
+                NonNullList<ItemStack> boxItems = NonNullList.withSize(27, ItemStack.EMPTY);
+                sh.contents().copyInto(boxItems);
+                for (int slot = 0; slot < 27; slot++) {
+                    ItemStack boxStack = boxItems.get(slot);
+                    if (boxStack.isEmpty()) continue;
+                    if (BundleContentsHelper.isNonEmptyBundle(boxStack)) {
+                        BundleContents inner = BundleContentsHelper.getContents(boxStack);
+                        List<ItemStack> innerItems = inner.itemCopyStream().toList();
+                        for (int i = 0; i < innerItems.size(); i++) {
+                            result.add(new FlatItem(PanelItemSource.SHULKER_INNER_BUNDLE,
+                                    sh.containerSlot(), i, sh.invIndex(), slot, innerItems.get(i)));
+                        }
+                    } else {
+                        result.add(new FlatItem(PanelItemSource.SHULKER_BOX,
+                                sh.containerSlot(), -1, sh.invIndex(), slot, boxStack));
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    /** All shulker boxes in the player inventory (only meaningful when quickshulker is loaded). */
+    public static List<ShulkerEntry> findShulkers() {
+        Minecraft client = Minecraft.getInstance();
+        Player player = client.player;
+        if (player == null || !ShulkerSupport.isLoaded()) return List.of();
+        Inventory inv = player.getInventory();
+        List<ShulkerEntry> result = new ArrayList<>();
+        for (int i = 0; i < 36; i++) {
+            ItemStack stack = inv.getItem(i);
+            if (!ShulkerSupport.isShulker(stack)) continue;
+            ItemContainerContents contents = ShulkerSupport.getContents(stack);
+            if (contents == null) continue;
+            result.add(new ShulkerEntry(i, findContainerSlot(player, inv, i), stack, contents));
         }
         return result;
     }
@@ -119,6 +174,11 @@ public final class BundlePanelRenderer {
 
     public static List<BundleSlotEntry> getBundles() { return findBundles(false); }
     public static List<BundleSlotEntry> getAllBundles() { return findBundles(true); }
+
+    public static boolean hasAnyContent() {
+        if (!getBundles().isEmpty()) return true;
+        return !findShulkers().isEmpty();
+    }
 
     private static List<BundleSlotEntry> findBundles(boolean includeEmpty) {
         Minecraft client = Minecraft.getInstance();
@@ -223,8 +283,8 @@ public final class BundlePanelRenderer {
 
     public static void render(GuiGraphicsExtractor graphics, int leftPos, int topPos, int imageHeight, int mouseX, int mouseY) {
         if (!isEffectivelyVisible()) return;
+        if (!hasAnyContent()) { scrollOffset = 0; return; }
         List<BundleSlotEntry> bundles = getBundles();
-        if (bundles.isEmpty()) { scrollOffset = 0; return; }
 
         List<FlatItem> allItems = buildFlatItemList(bundles);
         if (allItems.isEmpty()) { scrollOffset = 0; return; }

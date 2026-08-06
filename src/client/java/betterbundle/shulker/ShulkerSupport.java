@@ -2,6 +2,7 @@ package betterbundle.shulker;
 
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
+import net.minecraft.core.NonNullList;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.Slot;
@@ -9,6 +10,8 @@ import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.ItemContainerContents;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
+
+import betterbundle.util.BundleContentsHelper;
 
 /** Client-side integration with the optional quickshulker(-multi) mod.
  *  All quickshulker classes are accessed via reflection so that this class is safe
@@ -39,6 +42,23 @@ public final class ShulkerSupport {
     public static ItemContainerContents getContents(ItemStack stack) {
         if (!isShulker(stack)) return null;
         return stack.get(DataComponents.CONTAINER);
+    }
+
+    /** Client-side check: can the given item be deposited into this shulker box,
+     *  either into an empty slot or into an inner bundle (insertion policy). */
+    public static boolean hasRoom(ItemStack box, ItemStack toInsert) {
+        ItemContainerContents c = getContents(box);
+        if (c == null || toInsert == null || toInsert.isEmpty()) return false;
+        NonNullList<ItemStack> items = NonNullList.withSize(27, ItemStack.EMPTY);
+        c.copyInto(items);
+        boolean hasEmpty = false;
+        for (ItemStack it : items) {
+            if (it.isEmpty()) { hasEmpty = true; continue; }
+            if (BundleContentsHelper.isBundle(it) && BundleContentsHelper.canFitItem(it, toInsert)) {
+                return true;
+            }
+        }
+        return hasEmpty;
     }
 
     /** Map player-inventory index -> container menu slot index (for click packets / opening). */

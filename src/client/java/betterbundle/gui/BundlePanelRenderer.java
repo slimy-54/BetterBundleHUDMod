@@ -82,15 +82,18 @@ public final class BundlePanelRenderer {
     }
 
     public record FlatItem(PanelItemSource source, int bundleSlot, int itemIndex,
-                           int shulkerInvIndex, int boxSlot, ItemStack stack) {}
+                           int shulkerInvIndex, int boxSlot, ItemStack stack, int displayCount) {}
 
+    /** Merge identical stackable items (item + components) into a single panel cell whose
+     *  {@link FlatItem#displayCount()} may exceed the item's real max-stack size.
+     *  The cell keeps the identity of the first contributing source for click routing. */
     public static List<FlatItem> buildFlatItemList(List<BundleSlotEntry> bundles) {
         List<FlatItem> result = new ArrayList<>();
         for (BundleSlotEntry entry : bundles) {
             if (entry.contents() == null) continue;
             List<ItemStack> items = entry.contents().itemCopyStream().toList();
             for (int i = 0; i < items.size(); i++) {
-                result.add(new FlatItem(PanelItemSource.PLAYER_BUNDLE, entry.bundleSlot(), i, -1, -1, items.get(i)));
+                addMerged(result, PanelItemSource.PLAYER_BUNDLE, entry.bundleSlot(), i, -1, -1, items.get(i));
             }
         }
         if (ShulkerSupport.isLoaded()) {
@@ -100,21 +103,39 @@ public final class BundlePanelRenderer {
                 for (int slot = 0; slot < 27; slot++) {
                     ItemStack boxStack = boxItems.get(slot);
                     if (boxStack.isEmpty()) continue;
-                    if (BundleContentsHelper.isNonEmptyBundle(boxStack)) {
+                    if (BundleContentsHelper.isBundle(boxStack)) {
+                        // box-internal bundle: only its inner items are shown, never the bundle body;
+                        // an empty bundle contributes nothing
                         BundleContents inner = BundleContentsHelper.getContents(boxStack);
+                        if (inner == null || inner.isEmpty()) continue;
                         List<ItemStack> innerItems = inner.itemCopyStream().toList();
                         for (int i = 0; i < innerItems.size(); i++) {
-                            result.add(new FlatItem(PanelItemSource.SHULKER_INNER_BUNDLE,
-                                    sh.containerSlot(), i, sh.invIndex(), slot, innerItems.get(i)));
+                            addMerged(result, PanelItemSource.SHULKER_INNER_BUNDLE,
+                                    sh.containerSlot(), i, sh.invIndex(), slot, innerItems.get(i));
                         }
                     } else {
-                        result.add(new FlatItem(PanelItemSource.SHULKER_BOX,
-                                sh.containerSlot(), -1, sh.invIndex(), slot, boxStack));
+                        addMerged(result, PanelItemSource.SHULKER_BOX,
+                                sh.containerSlot(), -1, sh.invIndex(), slot, boxStack);
                     }
                 }
             }
         }
         return result;
+    }
+
+    private static void addMerged(List<FlatItem> result, PanelItemSource source, int bundleSlot, int itemIndex,
+                                  int shulkerInvIndex, int boxSlot, ItemStack stack) {
+        if (stack.getMaxStackSize() > 1) {
+            for (int i = 0; i < result.size(); i++) {
+                FlatItem fi = result.get(i);
+                if (fi.stack().isSameItemSameComponents(stack)) {
+                    result.set(i, new FlatItem(fi.source(), fi.bundleSlot(), fi.itemIndex(),
+                            fi.shulkerInvIndex(), fi.boxSlot(), fi.stack(), fi.displayCount() + stack.getCount()));
+                    return;
+                }
+            }
+        }
+        result.add(new FlatItem(source, bundleSlot, itemIndex, shulkerInvIndex, boxSlot, stack, stack.getCount()));
     }
 
     /** All shulker boxes in the player inventory (only meaningful when quickshulker is loaded). */
@@ -369,7 +390,12 @@ public final class BundlePanelRenderer {
 
                 FlatItem fi = items.get(flatIndex);
                 graphics.item(fi.stack(), sx + 1, sy + 1);
-                graphics.itemDecorations(client.font, fi.stack(), sx + 1, sy + 1);
+                if (fi.displayCount() != fi.stack().getCount()) {
+                    // merged cell: render the summed count (may exceed 64) instead of the native badge
+                    graphics.text(font, String.valueOf(fi.displayCount()), sx + 4, sy + 10, 0xFFFFFF, true);
+                } else {
+                    graphics.itemDecorations(client.font, fi.stack(), sx + 1, sy + 1);
+                }
 
                 if (mouseX >= sx && mouseX < sx + SLOT_SIZE && mouseY >= sy && mouseY < sy + SLOT_SIZE) {
                     hoveredFlatIndex = flatIndex;

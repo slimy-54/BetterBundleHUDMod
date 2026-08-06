@@ -22,7 +22,7 @@ jobs:
           - mc: "26.2"
             minecraft_version: "26.2"
             loader_version: "0.19.3"
-            loom_version: "1.17"
+            loom_version: "1.17.18"
             fabric_api_version: "0.156.0+26.2"
     name: "Build MC ${{ matrix.mc }}"
     steps:

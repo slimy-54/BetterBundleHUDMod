@@ -3,7 +3,7 @@
     "id": "better-bundle",
     "version": "${version}",
     "name": "Better Bundle",
-    "description": "Adds a side panel to the inventory for quick bundle access",
+    "description": "Adds a side panel to the inventory for quick bundle access. Optionally integrates with QuickShulker Multi to also show and manage the contents of shulker boxes.",
     "authors": [],
     "contact": {},
     "license": "MIT",
@@ -24,5 +24,8 @@
         "fabricloader": ">=0.18.4",
         "minecraft": ">=26.1",
         "java": ">=25"
+    },
+    "suggests": {
+        "quickshulker": "*"
     }
 }

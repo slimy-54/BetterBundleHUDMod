@@ -8,6 +8,11 @@ group = project.maven_group
 
 repositories {
     mavenCentral()
+    // quickshulker-multi (optional dependency) via Modrinth maven
+    maven {
+        name = "Modrinth"
+        url = "https://api.modrinth.com/maven"
+    }
 }
 
 configurations {
@@ -33,6 +38,10 @@ dependencies {
     implementation "net.fabricmc:fabric-loader:${project.loader_version}"
 
     implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+    // quickshulker-multi (optional integration): compile-time only, runtime guarded by isModLoaded
+    // MC 26.1 is unobfuscated -> use plain compileOnly (no mod* helpers in non-remap loom)
+    compileOnly "maven.modrinth:quickshulker-multi:v${project.quickshulker_version}"
 
     embed 'com.belerweb:pinyin4j:2.5.1'
 }

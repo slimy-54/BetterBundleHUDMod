@@ -197,6 +197,22 @@ public final class BundlePanelRenderer {
         }
     }
 
+    /** True if any bundle inside this shulker box can still fit the given item.
+     *  Empty slots directly in the box do NOT count as storage. */
+    public static boolean boxHasBundleRoom(ItemStack box, ItemStack toInsert) {
+        if (box == null || box.isEmpty()) return false;
+        ItemContainerContents contents = ShulkerSupport.getContents(box);
+        if (contents == null) return false;
+        NonNullList<ItemStack> items = NonNullList.withSize(27, ItemStack.EMPTY);
+        contents.copyInto(items);
+        for (ItemStack it : items) {
+            if (BundleContentsHelper.isBundle(it) && BundleContentsHelper.canFitItem(it, toInsert)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static List<BundleSlotEntry> getBundles() { return findBundles(false); }
     public static List<BundleSlotEntry> getAllBundles() { return findBundles(true); }
 

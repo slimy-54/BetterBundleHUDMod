@@ -77,6 +77,13 @@ public final class ShulkerBoxOps {
         if (destInventoryIndex >= 0) pendingPickupInvIndex = destInventoryIndex;
     }
 
+    /** Arm a cursor-grab for the given player inventory index once back on a normal screen.
+     *  Used by the pure player-bag take path (no silent box involved). */
+    public static void armPickupFor(int inventoryIndex) {
+        if (inventoryIndex < 0) return;
+        pendingPickupInvIndex = inventoryIndex;
+    }
+
     // ---- requester (client-thread) ------------------------------------
 
     /** Start auto-composing {@code targetCount} items from the given sources into the
@@ -153,7 +160,9 @@ public final class ShulkerBoxOps {
             boolean more = wasCompose && nextInvToOpen >= 0;
             if (!more) {
                 pendingOp = Op.NONE;
-                if (wasCompose && composeJobs.isEmpty()) armPendingPickup();
+                // Arm the cursor-grab for ANY take that has finished (single-box or multi-box
+                // compose). Deposit (wasCompose == false) must NOT arm a pickup.
+                if (wasCompose) armPendingPickup();
             } else {
                 // keep busy; open the next box after this one is closed
                 int next = nextInvToOpen;

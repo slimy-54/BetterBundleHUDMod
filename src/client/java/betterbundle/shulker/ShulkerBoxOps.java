@@ -47,6 +47,7 @@ public final class ShulkerBoxOps {
     private static final ArrayDeque<ComposeJob> composeJobs = new ArrayDeque<>();
     private static int nextInvToOpen = -1;           // -1 = chain finished
     private static int containerIdWhenOpened = -1;
+    private static int lastBoxInvIndex = -1;          // box inventory index of the currently-open menu
 
     // Deferred (tick-based) box execution. A box menu arrives from the server with a
     // zero stateId and empty slots; clicking it immediately races the server's content
@@ -71,20 +72,29 @@ public final class ShulkerBoxOps {
     public static boolean hasPendingPickup() { return pendingPickupInvIndex >= 0; }
 
     private static int pendingPickupMisses = 0;
+    private static long pendingPickupStartMs = 0;
+    private static final long PICKUP_TIMEOUT_MS = 5000;
 
     /** Perform the armed grab (move the composed stack from {@code pendingPickupInvIndex}
      *  onto the cursor) exactly once. Returns true if it grabbed. Safe to call anywhere.
-     *  If the cache slot is not filled yet (the server has not applied the compose clicks),
-     *  keeps itself armed so the next render can retry instead of dropping the item into
-     *  the backpack forever. */
+     *  If the cache slot is not filled yet (the server has not applied the compose clicks
+     *  yet - its menu sync arrives a few hundred ms after the box closes), keeps itself
+     *  armed and retries for up to {@link #PICKUP_TIMEOUT_MS} instead of dropping the
+     *  item into the backpack forever. */
     public static boolean doPendingPickup(Player player) {
         if (!hasPendingPickup() || isBusy() || player == null || player.containerMenu == null) return false;
+        if (pendingPickupStartMs == 0) pendingPickupStartMs = System.currentTimeMillis();
+        if (System.currentTimeMillis() - pendingPickupStartMs > PICKUP_TIMEOUT_MS) {
+            pendingPickupInvIndex = -1;
+            pendingPickupStartMs = 0;
+            return false;
+        }
         int invIndex = pendingPickupInvIndex;
         int slot = resolveInventoryIndexToMenuSlot(player, invIndex);
-        if (slot < 0) { pendingPickupInvIndex = -1; return false; }
+        if (slot < 0) { pendingPickupInvIndex = -1; pendingPickupStartMs = 0; return false; }
         net.minecraft.world.inventory.Slot target = player.containerMenu.getSlot(slot);
         if (target == null || target.getItem() == null || target.getItem().isEmpty()) {
-            if (++pendingPickupMisses > 20) pendingPickupInvIndex = -1;
+            pendingPickupMisses++;
             return false;
         }
         pendingPickupMisses = 0;
@@ -92,11 +102,15 @@ public final class ShulkerBoxOps {
         Minecraft.getInstance().gameMode.handleContainerInput(
                 player.containerMenu.containerId, slot, (byte) 0, ContainerInput.PICKUP, player);
         pendingPickupInvIndex = -1;
+        pendingPickupStartMs = 0;
         return true;
     }
 
     private static void armPendingPickup() {
-        if (destInventoryIndex >= 0) pendingPickupInvIndex = destInventoryIndex;
+        if (destInventoryIndex >= 0) {
+            pendingPickupInvIndex = destInventoryIndex;
+            pendingPickupStartMs = 0;
+        }
     }
 
     /** Arm a cursor-grab for the given player inventory index once back on a normal screen.
@@ -104,6 +118,7 @@ public final class ShulkerBoxOps {
     public static void armPickupFor(int inventoryIndex) {
         if (inventoryIndex < 0) return;
         pendingPickupInvIndex = inventoryIndex;
+        pendingPickupStartMs = 0;
     }
 
     // ---- requester (client-thread) ------------------------------------
@@ -211,6 +226,12 @@ public final class ShulkerBoxOps {
         } catch (Throwable t) {
             if (DEBUG) LOGGER.error("[betterbundle] op {} threw while ticking", pendingOp, t);
         } finally {
+            // Reflect the edited box contents back into the player inventory box item so
+            // the panel refreshes immediately instead of showing stale pre-op contents.
+            int boxInvIndex = wasCompose ? lastBoxInvIndex : destInventoryIndex;
+            if (boxInvIndex >= 0) {
+                ShulkerSupport.writeBackOpenedBox(player, boxInvIndex, menu);
+            }
             closeBoxContainer(player, conn);
             boolean more = wasCompose && nextInvToOpen >= 0;
             if (more) {
@@ -253,6 +274,7 @@ public final class ShulkerBoxOps {
     private static void runComposeBox(Player player, ClientPacketListener conn) {
         ComposeJob job = composeJobs.pollFirst();
         if (job == null) return;
+        lastBoxInvIndex = job.shulkerInvIndex();
         int containerId = containerIdWhenOpened;
         int destSlot = resolveInventoryIndexToMenuSlot(player, destInventoryIndex);
         for (ComposeCommand t : job.takes()) {

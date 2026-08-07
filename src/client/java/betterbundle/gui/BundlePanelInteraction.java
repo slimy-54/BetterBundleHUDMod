@@ -235,29 +235,27 @@ public final class BundlePanelInteraction {
         ItemStack cursor = player.containerMenu.getCarried();
         if (cursor.isEmpty()) return false;
 
-        List<BundlePanelRenderer.BundleSlotEntry> bundles = BundlePanelRenderer.getAllBundles();
-        int targetBundleSlot = -1;
-        for (BundlePanelRenderer.BundleSlotEntry entry : bundles) {
-            if (BundleContentsHelper.canFitItem(entry.bundleStack(), cursor)) {
-                targetBundleSlot = entry.bundleSlot();
-                break;
+        // 1) Prefer depositing into a bundle INSIDE a shulker box (the user's expected
+        //    default). Empty box slots do NOT count. Target slot is resolved from the
+        //    box contents BEFORE opening, so no un-synced menu is read.
+        for (BundlePanelRenderer.ShulkerEntry sh : BundlePanelRenderer.findShulkers()) {
+            int targetSlot = ShulkerSupport.findBundleSlotFor(sh.boxStack(), cursor);
+            if (targetSlot >= 0) {
+                ShulkerBoxOps.deposit(sh.invIndex(), targetSlot);
+                return true;
             }
-        }
-        if (targetBundleSlot < 0) {
-            // No fitting player bundle -> try depositing the cursor stack into a shulker box
-            for (BundlePanelRenderer.ShulkerEntry sh : BundlePanelRenderer.findShulkers()) {
-                int targetSlot = ShulkerSupport.findBundleSlotFor(sh.boxStack(), cursor);
-                if (targetSlot >= 0) {
-                    ShulkerBoxOps.deposit(sh.invIndex(), targetSlot);
-                    return true;
-                }
-            }
-            return false;
         }
 
+        // 2) Otherwise a fitting player-inventory bundle.
         int containerId = player.containerMenu.containerId;
-        pick(player, containerId, targetBundleSlot, (byte) button);
-        return true;
+        for (BundlePanelRenderer.BundleSlotEntry entry : BundlePanelRenderer.getAllBundles()) {
+            if (BundleContentsHelper.canFitItem(entry.bundleStack(), cursor)) {
+                pick(player, containerId, entry.bundleSlot(), (byte) button);
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public static boolean handleScroll(double mouseX, double mouseY, double scrollDelta,

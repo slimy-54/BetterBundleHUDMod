@@ -5,6 +5,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.core.NonNullList;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
@@ -77,6 +78,24 @@ public final class ShulkerSupport {
             }
         }
         return -1;
+    }
+
+    /** Write the contents of the currently-open box menu back into the box's {@code CONTAINER}
+     *  component on the player inventory item (at {@code inventoryIndex}). Silent box ops edit
+     *  the box via the open menu; without this the client-side box item (which the panel reads)
+     *  keeps showing the stale pre-op contents until the server's container-close sync arrives.
+     *  Doing it here makes the panel refresh immediately. */
+    public static void writeBackOpenedBox(Player player, int inventoryIndex, AbstractContainerMenu menu) {
+        if (player == null || menu == null) return;
+        ItemStack box = player.getInventory().getItem(inventoryIndex);
+        if (!isShulker(box)) return;
+        NonNullList<ItemStack> items = NonNullList.withSize(27, ItemStack.EMPTY);
+        int n = Math.min(27, menu.slots.size());
+        for (int i = 0; i < n; i++) {
+            net.minecraft.world.inventory.Slot s = menu.slots.get(i);
+            items.set(i, s != null ? s.getItem() : ItemStack.EMPTY);
+        }
+        box.set(DataComponents.CONTAINER, ItemContainerContents.fromList(items));
     }
 
     /** Map player-inventory index -> container menu slot index (for click packets / opening). */

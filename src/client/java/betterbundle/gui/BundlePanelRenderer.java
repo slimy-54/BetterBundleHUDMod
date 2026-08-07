@@ -394,8 +394,9 @@ public final class BundlePanelRenderer {
 
                 FlatItem fi = items.get(flatIndex);
                 graphics.item(fi.stack(), sx + 1, sy + 1);
-                if (fi.displayCount() != fi.stack().getCount()) {
-                    // merged cell: render the summed count (may exceed 64) instead of the native badge
+                if (fi.sources().size() > 1) {
+                    // merged cell: always render the summed count (may exceed the item's
+                    // max stack size / the native badge) instead of the native decoration
                     graphics.text(font, String.valueOf(fi.displayCount()), sx + 4, sy + 10, 0xFFFFFF, true);
                 } else {
                     graphics.itemDecorations(client.font, fi.stack(), sx + 1, sy + 1);

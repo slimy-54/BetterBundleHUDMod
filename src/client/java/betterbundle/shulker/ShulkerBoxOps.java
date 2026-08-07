@@ -202,6 +202,7 @@ public final class ShulkerBoxOps {
                 // bundle inside box: pull one item onto the cursor, then drop it into the
                 // destination slot (one at a time so the dest stack accumulates safely)
                 for (int i = 0; i < take; i++) {
+                    player.containerMenu.setSelectedBundleItemIndex(t.boxSlot(), t.innerIndex());
                     conn.send(new ServerboundSelectBundleItemPacket(t.boxSlot(), t.innerIndex()));
                     sendPick(containerId, t.boxSlot(), (byte) 1, player);
                     if (destSlot >= 0) sendPick(containerId, destSlot, (byte) 1, player);

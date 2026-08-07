@@ -1,10 +1,7 @@
 package betterbundle.gui;
 
-import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
-import net.minecraft.network.HashedStack;
-import net.minecraft.network.protocol.game.ServerboundContainerClickPacket;
 import net.minecraft.network.protocol.game.ServerboundSelectBundleItemPacket;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.ContainerInput;
@@ -98,9 +95,11 @@ public final class BundlePanelInteraction {
             if (remaining <= 0) break;
             int take = Math.min(remaining, s.count());
             for (int i = 0; i < take; i++) {
+                // Record the selected inner index on the menu, then pull the exact item.
+                player.containerMenu.setSelectedBundleItemIndex(s.bundleSlot(), s.itemIndex());
                 connection.send(new ServerboundSelectBundleItemPacket(s.bundleSlot(), s.itemIndex()));
-                connection.send(makeClickPacket(containerId, s.bundleSlot(), (byte) 1));
-                if (destMenuSlot >= 0) connection.send(makeClickPacket(containerId, destMenuSlot, (byte) 1));
+                pick(player, containerId, s.bundleSlot(), (byte) 1);
+                if (destMenuSlot >= 0) pick(player, containerId, destMenuSlot, (byte) 1);
             }
             remaining -= take;
         }
@@ -142,8 +141,6 @@ public final class BundlePanelInteraction {
         ItemStack stack = hoveredSlot.getItem();
         if (stack.isEmpty() || BundleContentsHelper.isNonEmptyBundle(stack)) return false;
 
-        ClientPacketListener connection = client.getConnection();
-        if (connection == null) return false;
         int containerId = player.containerMenu.containerId;
         int itemSlot = hoveredSlot.index;
         List<BundlePanelRenderer.BundleSlotEntry> bundles = BundlePanelRenderer.getAllBundles();
@@ -153,7 +150,7 @@ public final class BundlePanelInteraction {
             if (BundlePanelRenderer.boxHasBundleRoom(sh.boxStack(), stack)) {
                 // Lift the item onto the cursor first, then let the silent box deposit put
                 // it into the inner bundle (runDeposit reads the carried stack when the box opens).
-                connection.send(makeClickPacket(containerId, itemSlot, (byte) 0));
+                pick(player, containerId, itemSlot, (byte) 0);
                 ShulkerBoxOps.deposit(sh.invIndex());
                 return true;
             }
@@ -169,16 +166,17 @@ public final class BundlePanelInteraction {
         }
         if (targetBundleSlot < 0) return false;
 
-        connection.send(makeClickPacket(containerId, itemSlot, (byte) 0));
-        connection.send(makeClickPacket(containerId, targetBundleSlot, (byte) 0));
+        pick(player, containerId, itemSlot, (byte) 0);
+        pick(player, containerId, targetBundleSlot, (byte) 0);
 
         return true;
     }
 
-    private static ServerboundContainerClickPacket makeClickPacket(int containerId, int slot, byte button) {
-        return new ServerboundContainerClickPacket(
-                containerId, -1, (short) slot, button,
-                ContainerInput.PICKUP, new Int2ObjectOpenHashMap<>(), HashedStack.EMPTY);
+    /** Issue a click through the canonical client path so the local menu (slots, carried,
+     *  stateId) stays in sync and the panel can refresh in real time. */
+    private static void pick(Player player, int containerId, int slot, byte button) {
+        Minecraft.getInstance().gameMode.handleContainerInput(
+                containerId, slot, button, ContainerInput.PICKUP, player);
     }
 
     /** Find an empty player inventory index (0-35); main inventory, then hotbar. */
@@ -253,10 +251,8 @@ public final class BundlePanelInteraction {
             return false;
         }
 
-        ClientPacketListener connection = client.getConnection();
-        if (connection == null) return false;
         int containerId = player.containerMenu.containerId;
-        connection.send(makeClickPacket(containerId, targetBundleSlot, (byte) button));
+        pick(player, containerId, targetBundleSlot, (byte) button);
         return true;
     }
 

@@ -47,6 +47,15 @@ public final class ShulkerBoxOps {
     private static int nextInvToOpen = -1;           // -1 = chain finished
     private static int containerIdWhenOpened = -1;
 
+    // Deferred (tick-based) box execution. A box menu arrives from the server with a
+    // zero stateId and empty slots; clicking it immediately races the server's content
+    // sync (the click gets rejected/desynced). We wait a few ticks until it is synced,
+    // then perform the clicks, close the box, and move on.
+    private static AbstractContainerMenu pendingBoxMenu = null;
+    private static int deferTicks = 0;
+    private static final int SYNC_DELAY_TICKS = 2;
+    private static net.minecraft.client.gui.screens.Screen previousScreen = null;
+
     /** When >= 0, after the compose chain finishes a "grab to cursor" click is pending on
      *  this player inventory index (arms the final pickup once back on the player screen). */
     private static volatile int pendingPickupInvIndex = -1;
@@ -59,13 +68,24 @@ public final class ShulkerBoxOps {
     /** Whether a final cursor-grab is armed (take flow only). */
     public static boolean hasPendingPickup() { return pendingPickupInvIndex >= 0; }
 
+    private static int pendingPickupMisses = 0;
+
     /** Perform the armed grab (move the composed stack from {@code pendingPickupInvIndex}
-     *  onto the cursor) exactly once. Returns true if it grabbed. Safe to call anywhere. */
+     *  onto the cursor) exactly once. Returns true if it grabbed. Safe to call anywhere.
+     *  If the cache slot is not filled yet (the server has not applied the compose clicks),
+     *  keeps itself armed so the next render can retry instead of dropping the item into
+     *  the backpack forever. */
     public static boolean doPendingPickup(Player player) {
         if (!hasPendingPickup() || isBusy() || player == null || player.containerMenu == null) return false;
         int invIndex = pendingPickupInvIndex;
         int slot = resolveInventoryIndexToMenuSlot(player, invIndex);
         if (slot < 0) { pendingPickupInvIndex = -1; return false; }
+        net.minecraft.world.inventory.Slot target = player.containerMenu.getSlot(slot);
+        if (target == null || target.getItem() == null || target.getItem().isEmpty()) {
+            if (++pendingPickupMisses > 20) pendingPickupInvIndex = -1;
+            return false;
+        }
+        pendingPickupMisses = 0;
         if (DEBUG) LOGGER.info("[betterbundle] pickup cache slotInventoryIdx={} menuSlot={}", invIndex, slot);
         Minecraft.getInstance().gameMode.handleContainerInput(
                 player.containerMenu.containerId, slot, (byte) 0, ContainerInput.PICKUP, player);
@@ -128,20 +148,39 @@ public final class ShulkerBoxOps {
 
     // ---- completion hook (client-thread, called by mixin after open) ----
 
-    /** Invoked by the container-open mixin once the box menu is active. */
+    /** Remember the screen we are taking over from, so we can restore it afterwards. */
+    public static void setPreviousScreen(net.minecraft.client.gui.screens.Screen screen) {
+        previousScreen = screen;
+    }
+
+    /** Invoked by the container-open mixin once the box menu is active. We do NOT click
+     *  immediately: the box open event arrives before the server has synced the menu's
+     *  slot contents / stateId (it is still 0 here). We remember the menu and let
+     *  {@link #tick()} run the operation once the box has stabilised. */
     public static void onBoxMenuOpened(AbstractContainerMenu menu) {
         if (pendingOp == Op.NONE || !(menu instanceof ShulkerBoxMenu)) return;
         containerIdWhenOpened = menu.containerId;
-        boolean wasCompose = pendingOp == Op.COMPOSE;
+        pendingBoxMenu = menu;
+        deferTicks = SYNC_DELAY_TICKS;
+        if (DEBUG) LOGGER.info("[betterbundle] box open queued op={} containerId={} stateId={} ({} slots)",
+                pendingOp, containerIdWhenOpened, menu.getStateId(), menu.slots.size());
+    }
+
+    /** End-of-client-tick driver. Once a queued box menu has had time to sync, run its
+     *  click operation, close the box, then restore the screen / continue the chain. */
+    public static void tick() {
+        if (pendingOp == Op.NONE || pendingBoxMenu == null) return;
+        if (deferTicks > 0) { deferTicks--; return; }
+        AbstractContainerMenu menu = pendingBoxMenu;
+        pendingBoxMenu = null;
         Minecraft mc = Minecraft.getInstance();
         Player player = mc.player;
         ClientPacketListener conn = mc.getConnection();
-        if (player == null || conn == null) {
+        if (player == null || conn == null || player.containerMenu != menu) {
             pendingOp = Op.NONE;
             return;
         }
-        if (DEBUG) LOGGER.info("[betterbundle] onBoxMenuOpened op={} containerId={} stateId={} ({} slots)",
-                pendingOp, containerIdWhenOpened, menu.getStateId(), menu.slots.size());
+        boolean wasCompose = pendingOp == Op.COMPOSE;
         try {
             if (wasCompose) {
                 runComposeBox(player, conn);
@@ -149,27 +188,28 @@ public final class ShulkerBoxOps {
                 runDeposit(player, conn);
             }
         } catch (Throwable t) {
-            if (DEBUG) LOGGER.error("[betterbundle] op {} threw", pendingOp, t);
-            pendingOp = Op.NONE;
+            if (DEBUG) LOGGER.error("[betterbundle] op {} threw while ticking", pendingOp, t);
         } finally {
-            // Properly close the box on the client side: resets player.containerMenu to the
-            // player inventory menu and sends the close packet. Sending a raw close packet
-            // alone leaves the client stuck in the (invisible) box menu -> freeze + the
-            // cursor-grab would target a stale container.
             closeBoxContainer(player, conn);
             boolean more = wasCompose && nextInvToOpen >= 0;
-            if (!more) {
-                pendingOp = Op.NONE;
-                // Arm the cursor-grab for ANY take that has finished (single-box or multi-box
-                // compose). Deposit (wasCompose == false) must NOT arm a pickup.
-                if (wasCompose) armPendingPickup();
-            } else {
-                // keep busy; open the next box after this one is closed
+            if (more) {
                 int next = nextInvToOpen;
                 nextInvToOpen = -1;
                 ShulkerSupport.openAtInventorySlot(next);
+            } else {
+                pendingOp = Op.NONE;
+                if (wasCompose) armPendingPickup();
+                restoreScreenAfterOp(mc, player);
             }
         }
+    }
+
+    private static void restoreScreenAfterOp(Minecraft mc, Player player) {
+        if (mc == null) return;
+        // A finished take-compose returns to the player inventory screen so the pending
+        // cursor-grab (InventoryScreenMixin) can immediately collect the cache slot.
+        mc.setScreen(new net.minecraft.client.gui.screens.inventory.InventoryScreen(player));
+        previousScreen = null;
     }
 
     private static void closeBoxContainer(Player player, ClientPacketListener conn) {

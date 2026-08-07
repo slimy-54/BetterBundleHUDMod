@@ -172,7 +172,7 @@ public final class ShulkerBoxOps {
             // -> freeze + stale cursor-grab.
             if (player != null) player.containerMenu = player.inventoryMenu;
         } catch (Throwable t) {
-            if (DEBUG) LOG.warn("[betterbundle] resetting client menu failed", t);
+            if (DEBUG) LOGGER.warn("[betterbundle] resetting client menu failed", t);
         }
         if (conn != null) {
             conn.send(new ServerboundContainerClosePacket(containerIdWhenOpened));

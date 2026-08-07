@@ -3,7 +3,6 @@ package betterbundle.mixin;
 import betterbundle.gui.BundlePanelRenderer;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
-import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import org.spongepowered.asm.mixin.Mixin;
@@ -22,24 +21,6 @@ public abstract class InventoryScreenMixin {
                 self.topPos,
                 self.imageHeight,
                 mouseX, mouseY);
-
-        // Enlarge the bundle icon for the hovered panel item
-        int bundleSlot = BundlePanelRenderer.getHoveredBundleSlot();
-        if (bundleSlot >= 0) {
-            Slot slot = self.getMenu().getSlot(bundleSlot);
-            if (slot != null && slot.hasItem()) {
-                int sx = self.leftPos + slot.x;
-                int sy = self.topPos + slot.y;
-                var pose = graphics.pose();
-                pose.pushMatrix();
-                pose.translate(sx + 8, sy + 8);
-                float scale = 19f / 16f;
-                pose.scale(scale, scale);
-                pose.translate(-8, -8);
-                graphics.item(slot.getItem(), 0, 0);
-                pose.popMatrix();
-            }
-        }
 
         renderToggleButton(graphics, self.leftPos + self.imageWidth, self.topPos + 5, mouseX, mouseY);
     }

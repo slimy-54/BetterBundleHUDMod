@@ -128,7 +128,7 @@ public final class BundlePanelRenderer {
         if (stack.getMaxStackSize() > 1) {
             for (int i = 0; i < result.size(); i++) {
                 FlatItem fi = result.get(i);
-                if (fi.stack().isSameItemSameComponents(stack)) {
+                if (ItemStack.isSameItemSameComponents(fi.stack(), stack)) {
                     result.set(i, new FlatItem(fi.source(), fi.bundleSlot(), fi.itemIndex(),
                             fi.shulkerInvIndex(), fi.boxSlot(), fi.stack(), fi.displayCount() + stack.getCount()));
                     return;

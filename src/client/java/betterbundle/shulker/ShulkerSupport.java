@@ -95,7 +95,7 @@ public final class ShulkerSupport {
             net.minecraft.world.inventory.Slot s = menu.slots.get(i);
             items.set(i, s != null ? s.getItem() : ItemStack.EMPTY);
         }
-        box.set(DataComponents.CONTAINER, ItemContainerContents.fromList(items));
+        box.set(DataComponents.CONTAINER, ItemContainerContents.fromItems(items));
     }
 
     /** Map player-inventory index -> container menu slot index (for click packets / opening). */

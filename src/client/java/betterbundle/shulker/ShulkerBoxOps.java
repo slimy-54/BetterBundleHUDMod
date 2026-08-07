@@ -42,6 +42,7 @@ public final class ShulkerBoxOps {
 
     private static volatile Op pendingOp = Op.NONE;
     private static int destInventoryIndex = -1;      // targeted player inventory index (0-35)
+    private static int boxTargetSlot = -1;           // bundle slot (0..26) for DEPOSIT
     private static int composeLeft = 0;              // items still needed to reach the target
     private static final ArrayDeque<ComposeJob> composeJobs = new ArrayDeque<>();
     private static int nextInvToOpen = -1;           // -1 = chain finished
@@ -140,11 +141,14 @@ public final class ShulkerBoxOps {
         ShulkerSupport.openAtInventorySlot(composeJobs.peekFirst().shulkerInvIndex());
     }
 
-    /** Deposit the cursor stack into the box following the insertion policy. */
-    public static void deposit(int inventoryIndex) {
+    /** Deposit the cursor stack into the given bundle slot (0..26) of the box following
+     *  the insertion policy. The target slot is resolved BEFORE opening (from the box's
+     *  contents component), so we never depend on an un-synced open menu. */
+    public static void deposit(int inventoryIndex, int targetBoxSlot) {
         if (!ShulkerSupport.isLoaded() || pendingOp != Op.NONE) return;
         pendingOp = Op.DEPOSIT;
         destInventoryIndex = inventoryIndex;
+        boxTargetSlot = targetBoxSlot;
         boxOpenWaitTicks = 0;
         ShulkerSupport.openAtInventorySlot(inventoryIndex);
     }
@@ -292,12 +296,8 @@ public final class ShulkerBoxOps {
     private static void runDeposit(Player player, ClientPacketListener conn) {
         int containerId = containerIdWhenOpened;
         net.minecraft.world.item.ItemStack cursor = player.containerMenu.getCarried();
-        if (cursor == null || cursor.isEmpty()) { pendingOp = Op.NONE; return; }
-
-        // Only deposit into a bundle inside the box - empty box slots do NOT count.
-        int targetSlot = findBundleInBox(player, cursor);
-        if (targetSlot < 0) { pendingOp = Op.NONE; return; }
-        sendPick(containerId, targetSlot, (byte) 0, player);
+        if (cursor == null || cursor.isEmpty() || boxTargetSlot < 0) { pendingOp = Op.NONE; return; }
+        sendPick(containerId, boxTargetSlot, (byte) 0, player);
     }
 
     /** Send a vanilla PICKUP click through the canonical client path so the client
@@ -307,20 +307,6 @@ public final class ShulkerBoxOps {
                 containerId, slot, button, player.containerMenu.getStateId());
         Minecraft.getInstance().gameMode.handleContainerInput(
                 containerId, slot, button, ContainerInput.PICKUP, player);
-    }
-
-    private static int findBundleInBox(Player player, net.minecraft.world.item.ItemStack toInsert) {
-        for (int i = 0; i < 27; i++) {
-            net.minecraft.world.inventory.Slot slot = player.containerMenu.getSlot(i);
-            if (slot != null && slot.hasItem()) {
-                net.minecraft.world.item.ItemStack stack = slot.getItem();
-                if (BundleContentsHelper.isBundle(stack)
-                        && BundleContentsHelper.canFitItem(stack, toInsert)) {
-                    return i;
-                }
-            }
-        }
-        return -1;
     }
 
     /** Map a player inventory index (0-35) to its slot index in the CURRENT open menu. */

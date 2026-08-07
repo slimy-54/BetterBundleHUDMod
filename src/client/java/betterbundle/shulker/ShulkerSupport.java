@@ -61,6 +61,24 @@ public final class ShulkerSupport {
         return hasEmpty;
     }
 
+    /** Find the first bundle slot (0..26) inside this box that can fit {@code toInsert}.
+     *  Uses the box's own contents component (available before the box is opened),
+     *  so we never have to read an un-synced open menu. Returns -1 if none fits. */
+    public static int findBundleSlotFor(ItemStack box, ItemStack toInsert) {
+        if (!isShulker(box) || toInsert == null || toInsert.isEmpty()) return -1;
+        ItemContainerContents c = getContents(box);
+        if (c == null) return -1;
+        NonNullList<ItemStack> items = NonNullList.withSize(27, ItemStack.EMPTY);
+        c.copyInto(items);
+        for (int slot = 0; slot < 27; slot++) {
+            ItemStack it = items.get(slot);
+            if (BundleContentsHelper.isBundle(it) && BundleContentsHelper.canFitItem(it, toInsert)) {
+                return slot;
+            }
+        }
+        return -1;
+    }
+
     /** Map player-inventory index -> container menu slot index (for click packets / opening). */
     public static int findContainerSlot(Player player, int inventoryIndex) {
         for (Slot slot : player.containerMenu.slots) {

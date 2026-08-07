@@ -149,9 +149,11 @@ public final class BundlePanelInteraction {
         for (BundlePanelRenderer.ShulkerEntry sh : BundlePanelRenderer.findShulkers()) {
             if (BundlePanelRenderer.boxHasBundleRoom(sh.boxStack(), stack)) {
                 // Lift the item onto the cursor first, then let the silent box deposit put
-                // it into the inner bundle (runDeposit reads the carried stack when the box opens).
+                // it into the inner bundle (runDeposit clicks the pre-resolved target slot).
+                int targetSlot = ShulkerSupport.findBundleSlotFor(sh.boxStack(), stack);
+                if (targetSlot < 0) continue;
                 pick(player, containerId, itemSlot, (byte) 0);
-                ShulkerBoxOps.deposit(sh.invIndex());
+                ShulkerBoxOps.deposit(sh.invIndex(), targetSlot);
                 return true;
             }
         }
@@ -244,8 +246,9 @@ public final class BundlePanelInteraction {
         if (targetBundleSlot < 0) {
             // No fitting player bundle -> try depositing the cursor stack into a shulker box
             for (BundlePanelRenderer.ShulkerEntry sh : BundlePanelRenderer.findShulkers()) {
-                if (ShulkerSupport.hasRoom(sh.boxStack(), cursor)) {
-                    ShulkerBoxOps.deposit(sh.invIndex());
+                int targetSlot = ShulkerSupport.findBundleSlotFor(sh.boxStack(), cursor);
+                if (targetSlot >= 0) {
+                    ShulkerBoxOps.deposit(sh.invIndex(), targetSlot);
                     return true;
                 }
             }

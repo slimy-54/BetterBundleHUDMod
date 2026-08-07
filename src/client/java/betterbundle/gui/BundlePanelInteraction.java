@@ -179,11 +179,12 @@ public final class BundlePanelInteraction {
                 containerId, slot, button, ContainerInput.PICKUP, player);
     }
 
-    /** Find an empty player inventory index (0-35); main inventory, then hotbar. */
+    /** Find an empty player inventory index (0-35); hotbar first (so the composed take
+     *  lands in the quick bar / 物品栏 rather than the main backpack area), then main. */
     private static int findEmptyPlayerInvIndex(Player player) {
         for (int pass = 0; pass < 2; pass++) {
-            int min = (pass == 0) ? 9 : 0;
-            int max = (pass == 0) ? 36 : 9;
+            int min = (pass == 0) ? 0 : 9;
+            int max = (pass == 0) ? 9 : 36;
             for (net.minecraft.world.inventory.Slot slot : player.containerMenu.slots) {
                 if (slot.container == player.getInventory() && !slot.hasItem()) {
                     int idx = slot.getContainerSlot();

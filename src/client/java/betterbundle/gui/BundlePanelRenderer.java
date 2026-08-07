@@ -411,9 +411,12 @@ public final class BundlePanelRenderer {
                 FlatItem fi = items.get(flatIndex);
                 graphics.item(fi.stack(), sx + 1, sy + 1);
                 if (fi.sources().size() > 1) {
-                    // merged cell: always render the summed count (may exceed the item's
-                    // max stack size / the native badge) instead of the native decoration
-                    graphics.text(font, String.valueOf(fi.displayCount()), sx + 4, sy + 10, 0xFFFFFF, true);
+                    // merged cell (same item across several bags/boxes): render the summed
+                    // count with the native badge. Draw on a copy carrying the summed count
+                    // so the badge shows the real total instead of one bag's entry.
+                    ItemStack merged = fi.stack().copy();
+                    merged.setCount(Math.max(1, fi.displayCount()));
+                    graphics.itemDecorations(client.font, merged, sx + 1, sy + 1);
                 } else {
                     graphics.itemDecorations(client.font, fi.stack(), sx + 1, sy + 1);
                 }

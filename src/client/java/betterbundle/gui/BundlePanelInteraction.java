@@ -77,60 +77,38 @@ public final class BundlePanelInteraction {
         ClientPacketListener connection = client.getConnection();
         if (connection == null) return false;
 
-        // Split the clicked cell's sources into player-inventory bags vs boxes.
-        boolean hasPlayerBundles = false;
-        boolean hasBoxes = false;
-        for (BundlePanelRenderer.Source s : clicked.sources()) {
-            if (s.type() == BundlePanelRenderer.PanelItemSource.PLAYER_BUNDLE) hasPlayerBundles = true;
-            else hasBoxes = true;
-        }
-
-        if (!hasBoxes) {
-            // Player-bag-only cell: take to the cursor (left = one full stack composed
-            // across contributing bags, right = exactly 1).
-            int containerId = player.containerMenu.containerId;
-            int targetCount = (button == 0) ? clicked.stack().getMaxStackSize() : 1;
-            int remaining = targetCount;
-            for (BundlePanelRenderer.Source s : clicked.sources()) {
-                if (s.type() != BundlePanelRenderer.PanelItemSource.PLAYER_BUNDLE) continue;
-                if (remaining <= 0) break;
-                int take = Math.min(remaining, s.count());
-                for (int i = 0; i < take; i++) {
-                    connection.send(new ServerboundSelectBundleItemPacket(s.bundleSlot(), s.itemIndex()));
-                    connection.send(makeClickPacket(containerId, s.bundleSlot(), (byte) 1));
-                }
-                remaining -= take;
-            }
-            return true;
-        }
-
-        // Cell involves box(es): auto-compose one stack into a single player inventory
-        // slot across bags first, then boxes (opened sequentially). Right-click = 1.
+        // Take up to one full stack (the item's real max size) or exactly 1.
+        // We never exceed the item's max stack size: any overflow stays in the bags/boxes.
         int targetCount = (button == 0) ? clicked.stack().getMaxStackSize() : 1;
+        if (targetCount <= 0) return true;
+
+        // Everything is routed through a single empty player-inventory "cache" slot so the
+        // composed stack is finally grabbed back onto the cursor once we are on a normal screen.
         int destInvIndex = findEmptyPlayerInvIndex(player);
-        if (destInvIndex < 0) return true;          // no room
+        if (destInvIndex < 0) return true;          // no room to compose
+        int containerId = player.containerMenu.containerId;
+        int destMenuSlot = resolveInvIndexToMenuSlot(player, destInvIndex);
         int remaining = targetCount;
 
-        if (hasPlayerBundles) {
-            // consume player-bag sources first into the destination slot (open-inventory menu)
-            int containerId = player.containerMenu.containerId;
-            int destMenu = resolveInvIndexToMenuSlot(player, destInvIndex);
-            for (BundlePanelRenderer.Source s : clicked.sources()) {
-                if (s.type() != BundlePanelRenderer.PanelItemSource.PLAYER_BUNDLE) continue;
-                if (remaining <= 0) break;
-                int take = Math.min(remaining, s.count());
-                for (int i = 0; i < take; i++) {
-                    connection.send(new ServerboundSelectBundleItemPacket(s.bundleSlot(), s.itemIndex()));
-                    connection.send(makeClickPacket(containerId, s.bundleSlot(), (byte) 1));
-                }
-                if (destMenu >= 0) connection.send(makeClickPacket(containerId, destMenu, (byte) 0));
-                remaining -= take;
+        // Player-inventory bag sources: take from each bag into the cache slot.
+        // One item at a time (select the bundle slot, pull it onto the cursor, drop into cache)
+        // so the cache stack accumulates safely without exceeding the item's max stack size.
+        for (BundlePanelRenderer.Source s : clicked.sources()) {
+            if (s.type() != BundlePanelRenderer.PanelItemSource.PLAYER_BUNDLE) continue;
+            if (remaining <= 0) break;
+            int take = Math.min(remaining, s.count());
+            for (int i = 0; i < take; i++) {
+                connection.send(new ServerboundSelectBundleItemPacket(s.bundleSlot(), s.itemIndex()));
+                connection.send(makeClickPacket(containerId, s.bundleSlot(), (byte) 1));
+                if (destMenuSlot >= 0) connection.send(makeClickPacket(containerId, destMenuSlot, (byte) 1));
             }
+            remaining -= take;
         }
 
-        // box sources: build commands and let ShulkerBoxOps open the box(es) sequentially,
-        // taking the remaining count into the cache slot (then grabbed to the cursor on return).
         if (remaining > 0) {
+            // Box-inner bundle sources: build commands and let ShulkerBoxOps open each box
+            // silently, taking the remaining count into the same cache slot (then grabbed to
+            // cursor once back on the player screen).
             List<ShulkerBoxOps.ComposeCommand> commands = new java.util.ArrayList<>();
             for (BundlePanelRenderer.Source s : clicked.sources()) {
                 if (remaining <= 0) break;
@@ -139,8 +117,15 @@ public final class BundlePanelInteraction {
                             s.shulkerInvIndex(), s.boxSlot(), s.itemIndex(), true, s.count()));
                 }
             }
-            ShulkerBoxOps.startCompose(commands, remaining, destInvIndex);
+            if (!commands.isEmpty()) {
+                ShulkerBoxOps.startCompose(commands, remaining, destInvIndex);
+                return true;
+            }
         }
+
+        // Pure player-bag take (or a partial take with no box sources left): the composed
+        // stack sits in the cache slot - arm the grab so it lands on the cursor on return.
+        ShulkerBoxOps.armPickupFor(destInvIndex);
         return true;
     }
 

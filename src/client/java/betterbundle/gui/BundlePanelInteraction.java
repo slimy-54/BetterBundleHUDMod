@@ -142,7 +142,24 @@ public final class BundlePanelInteraction {
         ItemStack stack = hoveredSlot.getItem();
         if (stack.isEmpty() || BundleContentsHelper.isNonEmptyBundle(stack)) return false;
 
+        ClientPacketListener connection = client.getConnection();
+        if (connection == null) return false;
+        int containerId = player.containerMenu.containerId;
+        int itemSlot = hoveredSlot.index;
         List<BundlePanelRenderer.BundleSlotEntry> bundles = BundlePanelRenderer.getAllBundles();
+
+        // 1) Prefer a bundle INSIDE a shulker box. Empty box slots do NOT count.
+        for (BundlePanelRenderer.ShulkerEntry sh : BundlePanelRenderer.findShulkers()) {
+            if (BundlePanelRenderer.boxHasBundleRoom(sh.boxStack(), stack)) {
+                // Lift the item onto the cursor first, then let the silent box deposit put
+                // it into the inner bundle (runDeposit reads the carried stack when the box opens).
+                connection.send(makeClickPacket(containerId, itemSlot, (byte) 0));
+                ShulkerBoxOps.deposit(sh.invIndex());
+                return true;
+            }
+        }
+
+        // 2) Otherwise store into a player-inventory bundle.
         int targetBundleSlot = -1;
         for (BundlePanelRenderer.BundleSlotEntry entry : bundles) {
             if (BundleContentsHelper.canFitItem(entry.bundleStack(), stack)) {
@@ -150,22 +167,7 @@ public final class BundlePanelInteraction {
                 break;
             }
         }
-        if (targetBundleSlot < 0) {
-            // No fitting player bundle -> try depositing into a shulker box
-            for (BundlePanelRenderer.ShulkerEntry sh : BundlePanelRenderer.findShulkers()) {
-                if (ShulkerSupport.hasRoom(sh.boxStack(), stack)) {
-                    ShulkerBoxOps.deposit(sh.invIndex());
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        ClientPacketListener connection = client.getConnection();
-        if (connection == null) return false;
-
-        int containerId = player.containerMenu.containerId;
-        int itemSlot = hoveredSlot.index;
+        if (targetBundleSlot < 0) return false;
 
         connection.send(makeClickPacket(containerId, itemSlot, (byte) 0));
         connection.send(makeClickPacket(containerId, targetBundleSlot, (byte) 0));

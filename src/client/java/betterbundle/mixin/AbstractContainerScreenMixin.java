@@ -71,13 +71,17 @@ public abstract class AbstractContainerScreenMixin {
 
         if (!BundlePanelRenderer.isEffectivelyVisible()) return;
 
-        // Panel grid clicks: with an empty cursor route to take-from-panel; with a
-        // non-empty cursor we do NOTHING (no moving/taking/inserting while the cursor
-        // already holds an item). Toggle/category/search were handled above.
+        // Panel grid clicks:
+        //  - empty cursor -> take from panel
+        //  - cursor holds a normal (non-bundle) item -> insert it into a bundle
+        //  - cursor holds a non-empty bundle -> ignore (don't stuff a bundle into a bundle)
         ItemStack cursor = self.getMenu().getCarried();
         if (BundlePanelInteraction.isInsidePanel(mx, my, self.leftPos, self.topPos, self.imageHeight)) {
             if (!cursor.isEmpty()) {
-                cir.setReturnValue(true);
+                if (!betterbundle.util.BundleContentsHelper.isBundle(cursor)) {
+                    boolean handled = BundlePanelInteraction.handlePanelInsert(event.button());
+                    if (handled) cir.setReturnValue(true);
+                }
                 return;
             }
             boolean handled = BundlePanelInteraction.handlePanelClick(

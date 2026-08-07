@@ -99,7 +99,7 @@ public final class BundlePanelInteraction {
                 player.containerMenu.setSelectedBundleItemIndex(s.bundleSlot(), s.itemIndex());
                 connection.send(new ServerboundSelectBundleItemPacket(s.bundleSlot(), s.itemIndex()));
                 pick(player, containerId, s.bundleSlot(), (byte) 1);
-                if (destMenuSlot >= 0) pick(player, containerId, destMenuSlot, (byte) 1);
+                if (destMenuSlot >= 0) pick(player, containerId, destMenuSlot, (byte) 0);
             }
             remaining -= take;
         }

@@ -199,13 +199,22 @@ public final class ShulkerBoxOps {
             int take = Math.min(t.count(), composeLeft);
             if (take <= 0) continue;
             if (t.isInner()) {
-                // bundle inside box: pull one item onto the cursor, then drop it into the
-                // destination slot (one at a time so the dest stack accumulates safely)
+                // bundle inside box: pull one selected item onto the cursor, then drop it
+                // into the destination slot. The cursor MUST be empty when we right-click
+                // the bundle: with a carried stack, the bundle's own override is skipped
+                // and a plain swap would pick up the whole bundle. Left-button deposit
+                // (button 0) empties the cursor fully, so it stays clean across iterations.
                 for (int i = 0; i < take; i++) {
+                    if (!player.containerMenu.getCarried().isEmpty() && destSlot >= 0) {
+                        sendPick(containerId, destSlot, (byte) 0, player);
+                    }
+                    if (!player.containerMenu.getCarried().isEmpty()) break;
                     player.containerMenu.setSelectedBundleItemIndex(t.boxSlot(), t.innerIndex());
                     conn.send(new ServerboundSelectBundleItemPacket(t.boxSlot(), t.innerIndex()));
                     sendPick(containerId, t.boxSlot(), (byte) 1, player);
-                    if (destSlot >= 0) sendPick(containerId, destSlot, (byte) 1, player);
+                    if (destSlot >= 0 && !player.containerMenu.getCarried().isEmpty()) {
+                        sendPick(containerId, destSlot, (byte) 0, player);
+                    }
                 }
             } else {
                 // direct box slot: pick whole slot, drop `take` into dest, put remainder back

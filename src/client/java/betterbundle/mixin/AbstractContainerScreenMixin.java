@@ -71,35 +71,19 @@ public abstract class AbstractContainerScreenMixin {
 
         if (!BundlePanelRenderer.isEffectivelyVisible()) return;
 
-        // Cursor has items + click anywhere in panel (except category buttons) → insert
+        // Panel grid clicks: with an empty cursor route to take-from-panel; with a
+        // non-empty cursor we do NOTHING (no moving/taking/inserting while the cursor
+        // already holds an item). Toggle/category/search were handled above.
         ItemStack cursor = self.getMenu().getCarried();
-        if (!cursor.isEmpty() && isInsidePanelBounds(mx, my, self.leftPos, self.topPos, self.imageHeight)) {
-            BundleCategory cat = BundlePanelRenderer.getCategoryAt(mx, my, self.leftPos, self.topPos, self.imageHeight);
-            if (cat == null) {
-                boolean handled = BundlePanelInteraction.handlePanelInsert(event.button());
-                if (handled) cir.setReturnValue(true);
-            }
-        }
-
         if (BundlePanelInteraction.isInsidePanel(mx, my, self.leftPos, self.topPos, self.imageHeight)) {
-            if (cursor.isEmpty()) {
-                boolean handled = BundlePanelInteraction.handlePanelClick(
-                        mx, my, event.button(), event.modifiers(), self.leftPos, self.topPos, self);
-                if (handled) cir.setReturnValue(true);
+            if (!cursor.isEmpty()) {
+                cir.setReturnValue(true);
+                return;
             }
+            boolean handled = BundlePanelInteraction.handlePanelClick(
+                    mx, my, event.button(), event.modifiers(), self.leftPos, self.topPos, self);
+            if (handled) cir.setReturnValue(true);
         }
-    }
-
-    private static boolean isInsidePanelBounds(double mx, double my, int leftPos, int topPos, int imageHeight) {
-        int pw = BundlePanelRenderer.panelWidth();
-        int panelX = leftPos - pw - 4;
-        int panelY = topPos;
-        int searchH = BundlePanelRenderer.SEARCH_BAR_HEIGHT + 3;
-        int gridH = BundlePanelRenderer.PADDING * 2
-                + BundlePanelRenderer.VISIBLE_ROWS * BundlePanelRenderer.SLOT_SIZE
-                + (BundlePanelRenderer.VISIBLE_ROWS - 1) * BundlePanelRenderer.SLOT_SPACING;
-        int panelH = Math.min(imageHeight, searchH + gridH) + 24;
-        return mx >= panelX && mx <= panelX + pw && my >= panelY && my <= panelY + panelH;
     }
 
     @Inject(method = "mouseReleased", at = @At("HEAD"), cancellable = true)

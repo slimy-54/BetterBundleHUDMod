@@ -47,10 +47,35 @@ public final class ShulkerBoxOps {
     private static int nextInvToOpen = -1;           // -1 = chain finished
     private static int containerIdWhenOpened = -1;
 
+    /** When >= 0, after the compose chain finishes a "grab to cursor" click is pending on
+     *  this player inventory index (arms the final pickup once back on the player screen). */
+    private static volatile int pendingPickupInvIndex = -1;
+
     private record ComposeJob(int shulkerInvIndex, List<ComposeCommand> takes) {}
 
     /** Whether a shulker-box operation is currently in flight (locks panel interactions). */
     public static boolean isBusy() { return pendingOp != Op.NONE; }
+
+    /** Whether a final cursor-grab is armed (take flow only). */
+    public static boolean hasPendingPickup() { return pendingPickupInvIndex >= 0; }
+
+    /** Perform the armed grab (move the composed stack from {@code pendingPickupInvIndex}
+     *  onto the cursor) exactly once. Returns true if it grabbed. Safe to call anywhere. */
+    public static boolean doPendingPickup(Player player) {
+        if (!hasPendingPickup() || isBusy() || player == null || player.containerMenu == null) return false;
+        int invIndex = pendingPickupInvIndex;
+        int slot = resolveInventoryIndexToMenuSlot(player, invIndex);
+        if (slot < 0) { pendingPickupInvIndex = -1; return false; }
+        if (DEBUG) LOGGER.info("[betterbundle] pickup cache slotInventoryIdx={} menuSlot={}", invIndex, slot);
+        Minecraft.getInstance().gameMode.handleContainerInput(
+                player.containerMenu.containerId, slot, (byte) 0, ContainerInput.PICKUP, player);
+        pendingPickupInvIndex = -1;
+        return true;
+    }
+
+    private static void armPendingPickup() {
+        if (destInventoryIndex >= 0) pendingPickupInvIndex = destInventoryIndex;
+    }
 
     // ---- requester (client-thread) ------------------------------------
 
@@ -125,6 +150,7 @@ public final class ShulkerBoxOps {
             boolean more = pendingOp == Op.COMPOSE && nextInvToOpen >= 0;
             if (!more) {
                 pendingOp = Op.NONE;
+                if (composeJobs.isEmpty()) armPendingPickup();
             } else {
                 // keep busy; open the next box after this one is closed
                 int next = nextInvToOpen;
@@ -173,15 +199,10 @@ public final class ShulkerBoxOps {
         net.minecraft.world.item.ItemStack cursor = player.containerMenu.getCarried();
         if (cursor == null || cursor.isEmpty()) { pendingOp = Op.NONE; return; }
 
-        boolean stackable = cursor.getMaxStackSize() > 1;
-        int targetSlot = -1;
-        if (stackable) {
-            targetSlot = findBundleInBox(player, cursor);
-            if (targetSlot < 0) targetSlot = findEmptyBoxSlot(player);
-        } else {
-            targetSlot = findEmptyBoxSlot(player);
-            if (targetSlot < 0) targetSlot = findBundleInBox(player, cursor);
-        }
+        // Always prefer depositing into a bundle inside the box first, then an empty slot.
+        int targetSlot = findBundleInBox(player, cursor);
+        if (targetSlot < 0) targetSlot = findEmptyBoxSlot(player);
+        if (targetSlot < 0) targetSlot = findBundleInBox(player, cursor);
         if (targetSlot >= 0) {
             sendPick(containerId, targetSlot, (byte) 0, player);
         } else {

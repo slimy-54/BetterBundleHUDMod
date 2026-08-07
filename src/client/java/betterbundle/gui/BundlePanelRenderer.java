@@ -55,8 +55,6 @@ public final class BundlePanelRenderer {
     public enum PanelItemSource {
         /** item inside a bundle in the player inventory (vanilla bundle packets) */
         PLAYER_BUNDLE,
-        /** item directly inside a shulker box in the player inventory */
-        SHULKER_BOX,
         /** item inside a bundle which itself sits inside a shulker box */
         SHULKER_INNER_BUNDLE
     }
@@ -108,19 +106,15 @@ public final class BundlePanelRenderer {
                 for (int slot = 0; slot < 27; slot++) {
                     ItemStack boxStack = boxItems.get(slot);
                     if (boxStack.isEmpty()) continue;
-                    if (BundleContentsHelper.isBundle(boxStack)) {
-                        // box-internal bundle: only its inner items are shown, never the bundle body;
-                        // an empty bundle contributes nothing
-                        BundleContents inner = BundleContentsHelper.getContents(boxStack);
-                        if (inner == null || inner.isEmpty()) continue;
-                        List<ItemStack> innerItems = inner.itemCopyStream().toList();
-                        for (int i = 0; i < innerItems.size(); i++) {
-                            addMerged(result, PanelItemSource.SHULKER_INNER_BUNDLE,
-                                    sh.containerSlot(), i, sh.invIndex(), slot, innerItems.get(i));
-                        }
-                    } else {
-                        addMerged(result, PanelItemSource.SHULKER_BOX,
-                                sh.containerSlot(), -1, sh.invIndex(), slot, boxStack);
+                    // Only bundles inside the box count as normal items; items sitting
+                    // directly in a box slot are not part of the panel at all.
+                    if (!BundleContentsHelper.isBundle(boxStack)) continue;
+                    BundleContents inner = BundleContentsHelper.getContents(boxStack);
+                    if (inner == null || inner.isEmpty()) continue;
+                    List<ItemStack> innerItems = inner.itemCopyStream().toList();
+                    for (int i = 0; i < innerItems.size(); i++) {
+                        addMerged(result, PanelItemSource.SHULKER_INNER_BUNDLE,
+                                sh.containerSlot(), i, sh.invIndex(), slot, innerItems.get(i));
                     }
                 }
             }

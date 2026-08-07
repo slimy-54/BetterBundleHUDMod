@@ -1,6 +1,8 @@
 package betterbundle.mixin;
 
 import betterbundle.gui.BundlePanelRenderer;
+import betterbundle.shulker.ShulkerBoxOps;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.world.item.ItemStack;
@@ -23,6 +25,12 @@ public abstract class InventoryScreenMixin {
                 mouseX, mouseY);
 
         renderToggleButton(graphics, self.leftPos + self.imageWidth, self.topPos + 5, mouseX, mouseY);
+
+        // After a silent box take-compose finishes and we are back on the player screen,
+        // grab the composed stack from the cache slot onto the cursor.
+        if (!ShulkerBoxOps.isBusy() && ShulkerBoxOps.hasPendingPickup()) {
+            ShulkerBoxOps.doPendingPickup(Minecraft.getInstance().player);
+        }
     }
 
     private static void renderToggleButton(GuiGraphicsExtractor graphics, int x, int y, int mouseX, int mouseY) {

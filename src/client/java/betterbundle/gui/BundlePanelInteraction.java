@@ -128,16 +128,13 @@ public final class BundlePanelInteraction {
             }
         }
 
-        // box sources: build commands and let ShulkerBoxOps open them sequentially,
-        // taking the remaining count into the same destination slot.
+        // box sources: build commands and let ShulkerBoxOps open the box(es) sequentially,
+        // taking the remaining count into the cache slot (then grabbed to the cursor on return).
         if (remaining > 0) {
             List<ShulkerBoxOps.ComposeCommand> commands = new java.util.ArrayList<>();
             for (BundlePanelRenderer.Source s : clicked.sources()) {
                 if (remaining <= 0) break;
-                if (s.type() == BundlePanelRenderer.PanelItemSource.SHULKER_BOX) {
-                    commands.add(new ShulkerBoxOps.ComposeCommand(
-                            s.shulkerInvIndex(), s.boxSlot(), -1, false, s.count()));
-                } else if (s.type() == BundlePanelRenderer.PanelItemSource.SHULKER_INNER_BUNDLE) {
+                if (s.type() == BundlePanelRenderer.PanelItemSource.SHULKER_INNER_BUNDLE) {
                     commands.add(new ShulkerBoxOps.ComposeCommand(
                             s.shulkerInvIndex(), s.boxSlot(), s.itemIndex(), true, s.count()));
                 }
@@ -145,16 +142,6 @@ public final class BundlePanelInteraction {
             ShulkerBoxOps.startCompose(commands, remaining, destInvIndex);
         }
         return true;
-    }
-
-    /** Find an empty slot in the open container (not the player inventory). */
-    private static int findEmptyContainerSlot(Player player) {
-        for (net.minecraft.world.inventory.Slot slot : player.containerMenu.slots) {
-            if (!slot.hasItem() && slot.container != player.getInventory()) {
-                return slot.index;
-            }
-        }
-        return -1;
     }
 
     public static boolean handleSpaceClick(Slot hoveredSlot) {

@@ -125,6 +125,7 @@ public final class ShulkerBoxOps {
     public static void onBoxMenuOpened(AbstractContainerMenu menu) {
         if (pendingOp == Op.NONE || !(menu instanceof ShulkerBoxMenu)) return;
         containerIdWhenOpened = menu.containerId;
+        boolean wasCompose = pendingOp == Op.COMPOSE;
         Minecraft mc = Minecraft.getInstance();
         Player player = mc.player;
         ClientPacketListener conn = mc.getConnection();
@@ -135,7 +136,7 @@ public final class ShulkerBoxOps {
         if (DEBUG) LOGGER.info("[betterbundle] onBoxMenuOpened op={} containerId={} stateId={} ({} slots)",
                 pendingOp, containerIdWhenOpened, menu.getStateId(), menu.slots.size());
         try {
-            if (pendingOp == Op.COMPOSE) {
+            if (wasCompose) {
                 runComposeBox(player, conn);
             } else {
                 runDeposit(player, conn);
@@ -144,19 +145,36 @@ public final class ShulkerBoxOps {
             if (DEBUG) LOGGER.error("[betterbundle] op {} threw", pendingOp, t);
             pendingOp = Op.NONE;
         } finally {
-            if (pendingOp != Op.NONE) {
-                conn.send(new ServerboundContainerClosePacket(containerIdWhenOpened));
-            }
-            boolean more = pendingOp == Op.COMPOSE && nextInvToOpen >= 0;
+            // Properly close the box on the client side: resets player.containerMenu to the
+            // player inventory menu and sends the close packet. Sending a raw close packet
+            // alone leaves the client stuck in the (invisible) box menu -> freeze + the
+            // cursor-grab would target a stale container.
+            closeBoxContainer(player, conn);
+            boolean more = wasCompose && nextInvToOpen >= 0;
             if (!more) {
                 pendingOp = Op.NONE;
-                if (composeJobs.isEmpty()) armPendingPickup();
+                if (wasCompose && composeJobs.isEmpty()) armPendingPickup();
             } else {
                 // keep busy; open the next box after this one is closed
                 int next = nextInvToOpen;
                 nextInvToOpen = -1;
                 ShulkerSupport.openAtInventorySlot(next);
             }
+        }
+    }
+
+    private static void closeBoxContainer(Player player, ClientPacketListener conn) {
+        try {
+            // Reset client menu to the player inventory menu, then send the close packet.
+            // player.closeContainer() is the standard client-side close that clears
+            // player.containerMenu; the raw packet alone leaves the client stuck in the
+            // (invisible) box menu -> freeze + stale cursor-grab.
+            if (player != null) player.closeContainer();
+        } catch (Throwable t) {
+            if (DEBUG) LOGGER.warn("[betterbundle] player.closeContainer failed", t);
+        }
+        if (conn != null) {
+            conn.send(new ServerboundContainerClosePacket(containerIdWhenOpened));
         }
     }
 

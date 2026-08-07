@@ -166,12 +166,13 @@ public final class ShulkerBoxOps {
     private static void closeBoxContainer(Player player, ClientPacketListener conn) {
         try {
             // Reset client menu to the player inventory menu, then send the close packet.
-            // player.closeContainer() is the standard client-side close that clears
-            // player.containerMenu; the raw packet alone leaves the client stuck in the
-            // (invisible) box menu -> freeze + stale cursor-grab.
-            if (player != null) player.closeContainer();
+            // Player.closeContainer() is protected, but in Mojmap it is simply
+            // `containerMenu = inventoryMenu` (both public fields), so we assign directly.
+            // The raw packet alone leaves the client stuck in the (invisible) box menu
+            // -> freeze + stale cursor-grab.
+            if (player != null) player.containerMenu = player.inventoryMenu;
         } catch (Throwable t) {
-            if (DEBUG) LOGGER.warn("[betterbundle] player.closeContainer failed", t);
+            if (DEBUG) LOG.warn("[betterbundle] resetting client menu failed", t);
         }
         if (conn != null) {
             conn.send(new ServerboundContainerClosePacket(containerIdWhenOpened));

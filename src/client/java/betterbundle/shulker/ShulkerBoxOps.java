@@ -53,6 +53,7 @@ public final class ShulkerBoxOps {
     // then perform the clicks, close the box, and move on.
     private static AbstractContainerMenu pendingBoxMenu = null;
     private static int deferTicks = 0;
+    private static int boxOpenWaitTicks = 0;
     private static final int SYNC_DELAY_TICKS = 2;
     private static net.minecraft.client.gui.screens.Screen previousScreen = null;
 
@@ -119,6 +120,7 @@ public final class ShulkerBoxOps {
         composeLeft = targetCount;
         composeJobs.clear();
         nextInvToOpen = -1;
+        boxOpenWaitTicks = 0;
 
         // group by box (preserve first-seen order) so each box is opened only once
         Map<Integer, List<ComposeCommand>> byBox = new LinkedHashMap<>();
@@ -143,6 +145,7 @@ public final class ShulkerBoxOps {
         if (!ShulkerSupport.isLoaded() || pendingOp != Op.NONE) return;
         pendingOp = Op.DEPOSIT;
         destInventoryIndex = inventoryIndex;
+        boxOpenWaitTicks = 0;
         ShulkerSupport.openAtInventorySlot(inventoryIndex);
     }
 
@@ -169,7 +172,21 @@ public final class ShulkerBoxOps {
     /** End-of-client-tick driver. Once a queued box menu has had time to sync, run its
      *  click operation, close the box, then restore the screen / continue the chain. */
     public static void tick() {
-        if (pendingOp == Op.NONE || pendingBoxMenu == null) return;
+        if (pendingOp == Op.NONE) return;
+        // If the box never opened (quickshulker refused/silently failed), give up after a
+        // ~2s grace instead of locking the panel forever.
+        if (pendingBoxMenu == null) {
+            if (++boxOpenWaitTicks > 40) {
+                if (DEBUG) LOGGER.warn("[betterbundle] box never opened; aborting op={}", pendingOp);
+                pendingOp = Op.NONE;
+                Minecraft.getInstance().setScreen(
+                        previousScreen != null ? previousScreen
+                                : new net.minecraft.client.gui.screens.inventory.InventoryScreen(Minecraft.getInstance().player));
+                previousScreen = null;
+                pendingPickupInvIndex = -1;
+            }
+            return;
+        }
         if (deferTicks > 0) { deferTicks--; return; }
         AbstractContainerMenu menu = pendingBoxMenu;
         pendingBoxMenu = null;

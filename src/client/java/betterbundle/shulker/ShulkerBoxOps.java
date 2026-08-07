@@ -227,15 +227,10 @@ public final class ShulkerBoxOps {
         net.minecraft.world.item.ItemStack cursor = player.containerMenu.getCarried();
         if (cursor == null || cursor.isEmpty()) { pendingOp = Op.NONE; return; }
 
-        // Always prefer depositing into a bundle inside the box first, then an empty slot.
+        // Only deposit into a bundle inside the box - empty box slots do NOT count.
         int targetSlot = findBundleInBox(player, cursor);
-        if (targetSlot < 0) targetSlot = findEmptyBoxSlot(player);
-        if (targetSlot < 0) targetSlot = findBundleInBox(player, cursor);
-        if (targetSlot >= 0) {
-            sendPick(containerId, targetSlot, (byte) 0, player);
-        } else {
-            pendingOp = Op.NONE;
-        }
+        if (targetSlot < 0) { pendingOp = Op.NONE; return; }
+        sendPick(containerId, targetSlot, (byte) 0, player);
     }
 
     /** Send a vanilla PICKUP click through the canonical client path so the client
@@ -245,14 +240,6 @@ public final class ShulkerBoxOps {
                 containerId, slot, button, player.containerMenu.getStateId());
         Minecraft.getInstance().gameMode.handleContainerInput(
                 containerId, slot, button, ContainerInput.PICKUP, player);
-    }
-
-    private static int findEmptyBoxSlot(Player player) {
-        for (int i = 0; i < 27; i++) {
-            net.minecraft.world.inventory.Slot slot = player.containerMenu.getSlot(i);
-            if (slot != null && !slot.hasItem()) return i;
-        }
-        return -1;
     }
 
     private static int findBundleInBox(Player player, net.minecraft.world.item.ItemStack toInsert) {

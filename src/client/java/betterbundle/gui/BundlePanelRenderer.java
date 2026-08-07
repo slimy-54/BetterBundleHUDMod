@@ -81,8 +81,13 @@ public final class BundlePanelRenderer {
         scrollOffset = Math.clamp(scrollOffset + delta, 0, maxScroll);
     }
 
+    /** A single physical source of a panel item (which bag slot / which box slot). */
+    public record Source(PanelItemSource type, int bundleSlot, int itemIndex,
+                         int shulkerInvIndex, int boxSlot, int count) {}
+
     public record FlatItem(PanelItemSource source, int bundleSlot, int itemIndex,
-                           int shulkerInvIndex, int boxSlot, ItemStack stack, int displayCount) {}
+                           int shulkerInvIndex, int boxSlot, ItemStack stack, int displayCount,
+                           List<Source> sources) {}
 
     /** Merge identical stackable items (item + components) into a single panel cell whose
      *  {@link FlatItem#displayCount()} may exceed the item's real max-stack size.
@@ -125,17 +130,22 @@ public final class BundlePanelRenderer {
 
     private static void addMerged(List<FlatItem> result, PanelItemSource source, int bundleSlot, int itemIndex,
                                   int shulkerInvIndex, int boxSlot, ItemStack stack) {
+        Source src = new Source(source, bundleSlot, itemIndex, shulkerInvIndex, boxSlot, stack.getCount());
         if (stack.getMaxStackSize() > 1) {
             for (int i = 0; i < result.size(); i++) {
                 FlatItem fi = result.get(i);
                 if (ItemStack.isSameItemSameComponents(fi.stack(), stack)) {
+                    List<Source> ns = new ArrayList<>(fi.sources());
+                    ns.add(src);
                     result.set(i, new FlatItem(fi.source(), fi.bundleSlot(), fi.itemIndex(),
-                            fi.shulkerInvIndex(), fi.boxSlot(), fi.stack(), fi.displayCount() + stack.getCount()));
+                            fi.shulkerInvIndex(), fi.boxSlot(), fi.stack(),
+                            fi.displayCount() + stack.getCount(), List.copyOf(ns)));
                     return;
                 }
             }
         }
-        result.add(new FlatItem(source, bundleSlot, itemIndex, shulkerInvIndex, boxSlot, stack, stack.getCount()));
+        result.add(new FlatItem(source, bundleSlot, itemIndex, shulkerInvIndex, boxSlot, stack,
+                stack.getCount(), List.of(src)));
     }
 
     /** All shulker boxes in the player inventory (only meaningful when quickshulker is loaded). */

@@ -7,22 +7,26 @@ import net.minecraft.network.protocol.game.ServerboundSelectBundleItemPacket;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ContainerInput;
-import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.inventory.ShulkerBoxMenu;
-import net.minecraft.world.item.ItemStack;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
 import betterbundle.util.BundleContentsHelper;
 
-/** Performs silent (no visible GUI flash) shulker-box operations by opening the box via
- *  quickshulker, waiting for the container to open, sending click packets against it,
- *  then closing. Panel interactions are locked while {@link #busy}.
+/** Performs silent (no visible GUI flash) shulker-box operations by opening boxes via
+ *  quickshulker, waiting for each container to open, sending click packets against it,
+ *  then closing. Panel interactions are locked while {@link #isBusy()}.
  *
- *  Insertion policy (as requested):
- *  - stackable item  -> placed into a bundle inside the box if one can fit it
- *  - non-stackable   -> placed into an empty box slot
- *  - no empty slot   -> falls back to a bundle inside the box
+ *  Supports a {@code COMPOSE} chain that takes items across several boxes (and, for
+ *  player-inventory bags, across bags) into a single targeted player inventory slot,
+ *  so a full stack can be auto-composed from many sources. Boxes are opened one after
+ *  another; the chain continues until the target count is met or sources are exhausted.
  */
 public final class ShulkerBoxOps {
 
@@ -31,56 +35,62 @@ public final class ShulkerBoxOps {
 
     private ShulkerBoxOps() {}
 
-    public enum Op { NONE, TAKE_BOX, TAKE_INNER, DEPOSIT }
+    public enum Op { NONE, COMPOSE, DEPOSIT }
+
+    /** One planned take command for a source inside a box. */
+    public record ComposeCommand(int shulkerInvIndex, int boxSlot, int innerIndex, boolean isInner, int count) {}
 
     private static volatile Op pendingOp = Op.NONE;
-    private static int invIndex;
-    private static int boxSlotIndex;
-    private static int innerIndex;
-    private static int takeCount;                 // taken to cursor/inventory; <=0 -> whole source stack
+    private static int destInventoryIndex = -1;      // targeted player inventory index (0-35)
+    private static int composeLeft = 0;              // items still needed to reach the target
+    private static final ArrayDeque<ComposeJob> composeJobs = new ArrayDeque<>();
+    private static int nextInvToOpen = -1;           // -1 = chain finished
     private static int containerIdWhenOpened = -1;
+
+    private record ComposeJob(int shulkerInvIndex, List<ComposeCommand> takes) {}
 
     /** Whether a shulker-box operation is currently in flight (locks panel interactions). */
     public static boolean isBusy() { return pendingOp != Op.NONE; }
 
-    // ---- requesters (client-thread) ------------------------------------
+    // ---- requester (client-thread) ------------------------------------
 
-    /** Take {@code count} items from the box slot out into the player inventory
-     *  (count <= 0 means take the whole slot). */
-    public static void takeFromBox(int inventoryIndex, int boxSlot, int count) {
+    /** Start auto-composing {@code targetCount} items from the given sources into the
+     *  player inventory slot {@code destInventoryIndex}. Player-bundle sources must be
+     *  consumed BEFORE calling this (they use the open-inventory menu); box sources are
+     *  opened sequentially here. */
+    public static void startCompose(List<ComposeCommand> commands, int targetCount, int destInventoryIndex) {
         if (!ShulkerSupport.isLoaded() || pendingOp != Op.NONE) return;
-        pendingOp = Op.TAKE_BOX;
-        invIndex = inventoryIndex;
-        boxSlotIndex = boxSlot;
-        innerIndex = -1;
-        takeCount = count;
-        sendOpenAndWait(inventoryIndex);
+        if (commands.isEmpty() || targetCount <= 0 || destInventoryIndex < 0) return;
+
+        pendingOp = Op.COMPOSE;
+        destInventoryIndex = destInventoryIndex;
+        composeLeft = targetCount;
+        composeJobs.clear();
+        nextInvToOpen = -1;
+
+        // group by box (preserve first-seen order) so each box is opened only once
+        Map<Integer, List<ComposeCommand>> byBox = new LinkedHashMap<>();
+        for (ComposeCommand c : commands) {
+            byBox.computeIfAbsent(c.shulkerInvIndex(), k -> new ArrayList<>()).add(c);
+        }
+        byBox.forEach((inv, takes) -> composeJobs.add(new ComposeJob(inv, takes)));
+
+        if (!composeJobs.isEmpty()) {
+            openComposeNext();
+        } else {
+            pendingOp = Op.NONE;
+        }
     }
 
-    /** Take {@code count} of the given inner item out of a bundle located at boxSlot
-     *  inside the box (count <= 0 means as much as the inner item grouping allows). */
-    public static void takeFromInnerBundle(int inventoryIndex, int boxSlot, int bundleInnerIndex, int count) {
-        if (!ShulkerSupport.isLoaded() || pendingOp != Op.NONE) return;
-        pendingOp = Op.TAKE_INNER;
-        invIndex = inventoryIndex;
-        boxSlotIndex = boxSlot;
-        innerIndex = bundleInnerIndex;
-        takeCount = count;
-        sendOpenAndWait(inventoryIndex);
+    private static void openComposeNext() {
+        ShulkerSupport.openAtInventorySlot(composeJobs.peekFirst().shulkerInvIndex());
     }
 
     /** Deposit the cursor stack into the box following the insertion policy. */
     public static void deposit(int inventoryIndex) {
         if (!ShulkerSupport.isLoaded() || pendingOp != Op.NONE) return;
         pendingOp = Op.DEPOSIT;
-        invIndex = inventoryIndex;
-        boxSlotIndex = -1;
-        innerIndex = -1;
-        takeCount = 0;
-        sendOpenAndWait(inventoryIndex);
-    }
-
-    private static void sendOpenAndWait(int inventoryIndex) {
+        destInventoryIndex = inventoryIndex;
         ShulkerSupport.openAtInventorySlot(inventoryIndex);
     }
 
@@ -94,92 +104,88 @@ public final class ShulkerBoxOps {
         Player player = mc.player;
         ClientPacketListener conn = mc.getConnection();
         if (player == null || conn == null) {
-            abort();
+            pendingOp = Op.NONE;
             return;
         }
         if (DEBUG) LOGGER.info("[betterbundle] onBoxMenuOpened op={} containerId={} stateId={} ({} slots)",
                 pendingOp, containerIdWhenOpened, menu.getStateId(), menu.slots.size());
         try {
-            switch (pendingOp) {
-                case TAKE_BOX -> runTakeBox(player, conn);
-                case TAKE_INNER -> runTakeInner(player, conn);
-                case DEPOSIT -> runDeposit(player, conn);
-                default -> abort();
+            if (pendingOp == Op.COMPOSE) {
+                runComposeBox(player, conn);
+            } else {
+                runDeposit(player, conn);
             }
         } catch (Throwable t) {
             if (DEBUG) LOGGER.error("[betterbundle] op {} threw", pendingOp, t);
-            abort();
+            pendingOp = Op.NONE;
         } finally {
             if (pendingOp != Op.NONE) {
                 conn.send(new ServerboundContainerClosePacket(containerIdWhenOpened));
             }
-            pendingOp = Op.NONE;
+            boolean more = pendingOp == Op.COMPOSE && nextInvToOpen >= 0;
+            if (!more) {
+                pendingOp = Op.NONE;
+            } else {
+                // keep busy; open the next box after this one is closed
+                int next = nextInvToOpen;
+                nextInvToOpen = -1;
+                ShulkerSupport.openAtInventorySlot(next);
+            }
         }
     }
 
-    private static void runTakeBox(Player player, ClientPacketListener conn) {
+    /** Run one step of the compose chain against the currently-open box. */
+    private static void runComposeBox(Player player, ClientPacketListener conn) {
+        ComposeJob job = composeJobs.pollFirst();
+        if (job == null) return;
         int containerId = containerIdWhenOpened;
-        if (takeCount <= 0) {
-            // take whole slot -> move everything into the first free player slot
-            sendPick(containerId, boxSlotIndex, (byte) 0, player);
-            int emptySlot = findEmptyPlayerSlot(player);
-            if (emptySlot >= 0) {
-                sendPick(containerId, emptySlot, (byte) 0, player);
-            }
-        } else {
-            // partial: pick the whole slot, drop `takeCount` one-by-one into a free slot,
-            // then put the remainder back into the source slot
-            sendPick(containerId, boxSlotIndex, (byte) 0, player);
-            int emptySlot = findEmptyPlayerSlot(player);
-            if (emptySlot >= 0) {
-                for (int i = 0; i < takeCount; i++) {
-                    sendPick(containerId, emptySlot, (byte) 1, player);
+        int destSlot = resolveInventoryIndexToMenuSlot(player, destInventoryIndex);
+        for (ComposeCommand t : job.takes()) {
+            if (composeLeft <= 0) break;
+            int take = Math.min(t.count(), composeLeft);
+            if (take <= 0) continue;
+            if (t.isInner()) {
+                // bundle inside box: pull one item onto the cursor, then drop it into the
+                // destination slot (one at a time so the dest stack accumulates safely)
+                for (int i = 0; i < take; i++) {
+                    conn.send(new ServerboundSelectBundleItemPacket(t.boxSlot(), t.innerIndex()));
+                    sendPick(containerId, t.boxSlot(), (byte) 1, player);
+                    if (destSlot >= 0) sendPick(containerId, destSlot, (byte) 1, player);
                 }
-                sendPick(containerId, boxSlotIndex, (byte) 0, player);
+            } else {
+                // direct box slot: pick whole slot, drop `take` into dest, put remainder back
+                sendPick(containerId, t.boxSlot(), (byte) 0, player);
+                if (destSlot >= 0) {
+                    for (int i = 0; i < take; i++) {
+                        sendPick(containerId, destSlot, (byte) 1, player);
+                    }
+                }
+                sendPick(containerId, t.boxSlot(), (byte) 0, player);
             }
+            composeLeft -= take;
         }
-    }
-
-    private static void runTakeInner(Player player, ClientPacketListener conn) {
-        int containerId = containerIdWhenOpened;
-        // select the inner bundle item, then pull one into the (bundle's) cursor each time
-        int amount = takeCount <= 0 ? 64 : takeCount;
-        for (int i = 0; i < amount; i++) {
-            conn.send(new ServerboundSelectBundleItemPacket(boxSlotIndex, innerIndex));
-            sendPick(containerId, boxSlotIndex, (byte) 1, player);
-        }
-        int emptySlot = findEmptyPlayerSlot(player);
-        if (emptySlot >= 0) {
-            sendPick(containerId, emptySlot, (byte) 0, player);
-        }
+        nextInvToOpen = !composeJobs.isEmpty() && composeLeft > 0
+                ? composeJobs.peekFirst().shulkerInvIndex() : -1;
     }
 
     private static void runDeposit(Player player, ClientPacketListener conn) {
         int containerId = containerIdWhenOpened;
-        ItemStack cursor = player.containerMenu.getCarried();
-        if (cursor == null || cursor.isEmpty()) { abort(); return; }
+        net.minecraft.world.item.ItemStack cursor = player.containerMenu.getCarried();
+        if (cursor == null || cursor.isEmpty()) { pendingOp = Op.NONE; return; }
 
         boolean stackable = cursor.getMaxStackSize() > 1;
+        int targetSlot = -1;
         if (stackable) {
-            // stackable -> try a bundle inside the box first
-            int bundleSlot = findBundleInBox(player, cursor);
-            if (bundleSlot >= 0) {
-                sendPick(containerId, bundleSlot, (byte) 0, player);
-                return;
-            }
-        }
-        // non-stackable (or no fitting bundle) -> empty box slot
-        int emptyBoxSlot = findEmptyBoxSlot(player);
-        if (emptyBoxSlot >= 0) {
-            sendPick(containerId, emptyBoxSlot, (byte) 0, player);
-            return;
-        }
-        // box full -> fall back to a bundle inside the box
-        int bundleSlot = findBundleInBox(player, cursor);
-        if (bundleSlot >= 0) {
-            sendPick(containerId, bundleSlot, (byte) 0, player);
+            targetSlot = findBundleInBox(player, cursor);
+            if (targetSlot < 0) targetSlot = findEmptyBoxSlot(player);
         } else {
-            abort();
+            targetSlot = findEmptyBoxSlot(player);
+            if (targetSlot < 0) targetSlot = findBundleInBox(player, cursor);
+        }
+        if (targetSlot >= 0) {
+            sendPick(containerId, targetSlot, (byte) 0, player);
+        } else {
+            pendingOp = Op.NONE;
         }
     }
 
@@ -194,17 +200,17 @@ public final class ShulkerBoxOps {
 
     private static int findEmptyBoxSlot(Player player) {
         for (int i = 0; i < 27; i++) {
-            Slot slot = player.containerMenu.getSlot(i);
+            net.minecraft.world.inventory.Slot slot = player.containerMenu.getSlot(i);
             if (slot != null && !slot.hasItem()) return i;
         }
         return -1;
     }
 
-    private static int findBundleInBox(Player player, ItemStack toInsert) {
+    private static int findBundleInBox(Player player, net.minecraft.world.item.ItemStack toInsert) {
         for (int i = 0; i < 27; i++) {
-            Slot slot = player.containerMenu.getSlot(i);
+            net.minecraft.world.inventory.Slot slot = player.containerMenu.getSlot(i);
             if (slot != null && slot.hasItem()) {
-                ItemStack stack = slot.getItem();
+                net.minecraft.world.item.ItemStack stack = slot.getItem();
                 if (BundleContentsHelper.isBundle(stack)
                         && BundleContentsHelper.canFitItem(stack, toInsert)) {
                     return i;
@@ -214,21 +220,13 @@ public final class ShulkerBoxOps {
         return -1;
     }
 
-    private static int findEmptyPlayerSlot(Player player) {
-        for (int pass = 0; pass < 2; pass++) {
-            int min = (pass == 0) ? 9 : 0;
-            int max = (pass == 0) ? 36 : 9;
-            for (Slot slot : player.containerMenu.slots) {
-                if (slot.container == player.getInventory() && !slot.hasItem()) {
-                    int idx = slot.getContainerSlot();
-                    if (idx >= min && idx < max) return slot.index;
-                }
+    /** Map a player inventory index (0-35) to its slot index in the CURRENT open menu. */
+    private static int resolveInventoryIndexToMenuSlot(Player player, int inventoryIndex) {
+        for (net.minecraft.world.inventory.Slot s : player.containerMenu.slots) {
+            if (s.container == player.getInventory() && s.getContainerSlot() == inventoryIndex) {
+                return s.index;
             }
         }
         return -1;
-    }
-
-    private static void abort() {
-        pendingOp = Op.NONE;
     }
 }

@@ -74,60 +74,76 @@ public final class BundlePanelInteraction {
         Minecraft client = Minecraft.getInstance();
         Player player = client.player;
         if (player == null) return false;
-
-        BundlePanelRenderer.PanelItemSource source = clicked.source();
-        if (source == BundlePanelRenderer.PanelItemSource.SHULKER_BOX) {
-            // whole stack on left, exactly 1 on right
-            int count = (button == 0) ? -1 : 1; // -1 = whole source stack
-            ShulkerBoxOps.takeFromBox(clicked.shulkerInvIndex(), clicked.boxSlot(), count);
-            return true;
-        }
-        if (source == BundlePanelRenderer.PanelItemSource.SHULKER_INNER_BUNDLE) {
-            int count = (button == 0) ? -1 : 1;
-            ShulkerBoxOps.takeFromInnerBundle(clicked.shulkerInvIndex(), clicked.boxSlot(), clicked.itemIndex(), count);
-            return true;
-        }
-
         ClientPacketListener connection = client.getConnection();
         if (connection == null) return false;
 
-        int bundleSlot = clicked.bundleSlot();
-        int containerId = player.containerMenu.containerId;
-        boolean shiftDown = (modifiers & GLFW_MOD_SHIFT) != 0;
-
-        if (shiftDown) {
-            boolean inContainer = !(screen instanceof net.minecraft.client.gui.screens.inventory.InventoryScreen);
-            int emptySlot;
-            if (button == 0 && inContainer) {
-                emptySlot = findEmptyContainerSlot(player) >= 0
-                        ? findEmptyContainerSlot(player) : findEmptyPlayerSlot(player);
-            } else {
-                emptySlot = findEmptyPlayerSlot(player);
-            }
-            if (emptySlot < 0) return true;
-
-            int count = clicked.stack().getCount();
-            for (int i = 0; i < count; i++) {
-                connection.send(new ServerboundSelectBundleItemPacket(bundleSlot, clicked.itemIndex()));
-                connection.send(makeClickPacket(containerId, bundleSlot, (byte) 1));
-            }
-            connection.send(makeClickPacket(containerId, emptySlot, (byte) 0));
-        } else if (button == 0) {
-            // left-click: take the whole inner stack group into a free inventory slot
-            int emptySlot = findEmptyPlayerSlot(player);
-            if (emptySlot < 0) return true;
-            int count = clicked.stack().getCount();
-            for (int i = 0; i < count; i++) {
-                connection.send(new ServerboundSelectBundleItemPacket(bundleSlot, clicked.itemIndex()));
-                connection.send(makeClickPacket(containerId, bundleSlot, (byte) 1));
-            }
-            connection.send(makeClickPacket(containerId, emptySlot, (byte) 0));
-        } else {
-            // right-click: take exactly 1 into the cursor
-            connection.send(new ServerboundSelectBundleItemPacket(bundleSlot, clicked.itemIndex()));
-            connection.send(makeClickPacket(containerId, bundleSlot, (byte) 1));
+        // Split the clicked cell's sources into player-inventory bags vs boxes.
+        boolean hasPlayerBundles = false;
+        boolean hasBoxes = false;
+        for (BundlePanelRenderer.Source s : clicked.sources()) {
+            if (s.type() == BundlePanelRenderer.PanelItemSource.PLAYER_BUNDLE) hasPlayerBundles = true;
+            else hasBoxes = true;
         }
 
+        if (!hasBoxes) {
+            // Player-bag-only cell: take to the cursor (left = one full stack composed
+            // across contributing bags, right = exactly 1).
+            int containerId = player.containerMenu.containerId;
+            int targetCount = (button == 0) ? clicked.stack().getMaxStackSize() : 1;
+            int remaining = targetCount;
+            for (BundlePanelRenderer.Source s : clicked.sources()) {
+                if (s.type() != BundlePanelRenderer.PanelItemSource.PLAYER_BUNDLE) continue;
+                if (remaining <= 0) break;
+                int take = Math.min(remaining, s.count());
+                for (int i = 0; i < take; i++) {
+                    connection.send(new ServerboundSelectBundleItemPacket(s.bundleSlot(), s.itemIndex()));
+                    connection.send(makeClickPacket(containerId, s.bundleSlot(), (byte) 1));
+                }
+                remaining -= take;
+            }
+            return true;
+        }
+
+        // Cell involves box(es): auto-compose one stack into a single player inventory
+        // slot across bags first, then boxes (opened sequentially). Right-click = 1.
+        int targetCount = (button == 0) ? clicked.stack().getMaxStackSize() : 1;
+        int destInvIndex = findEmptyPlayerInvIndex(player);
+        if (destInvIndex < 0) return true;          // no room
+        int remaining = targetCount;
+
+        if (hasPlayerBundles) {
+            // consume player-bag sources first into the destination slot (open-inventory menu)
+            int containerId = player.containerMenu.containerId;
+            int destMenu = resolveInvIndexToMenuSlot(player, destInvIndex);
+            for (BundlePanelRenderer.Source s : clicked.sources()) {
+                if (s.type() != BundlePanelRenderer.PanelItemSource.PLAYER_BUNDLE) continue;
+                if (remaining <= 0) break;
+                int take = Math.min(remaining, s.count());
+                for (int i = 0; i < take; i++) {
+                    connection.send(new ServerboundSelectBundleItemPacket(s.bundleSlot(), s.itemIndex()));
+                    connection.send(makeClickPacket(containerId, s.bundleSlot(), (byte) 1));
+                }
+                if (destMenu >= 0) connection.send(makeClickPacket(containerId, destMenu, (byte) 0));
+                remaining -= take;
+            }
+        }
+
+        // box sources: build commands and let ShulkerBoxOps open them sequentially,
+        // taking the remaining count into the same destination slot.
+        if (remaining > 0) {
+            List<ShulkerBoxOps.ComposeCommand> commands = new java.util.ArrayList<>();
+            for (BundlePanelRenderer.Source s : clicked.sources()) {
+                if (remaining <= 0) break;
+                if (s.type() == BundlePanelRenderer.PanelItemSource.SHULKER_BOX) {
+                    commands.add(new ShulkerBoxOps.ComposeCommand(
+                            s.shulkerInvIndex(), s.boxSlot(), -1, false, s.count()));
+                } else if (s.type() == BundlePanelRenderer.PanelItemSource.SHULKER_INNER_BUNDLE) {
+                    commands.add(new ShulkerBoxOps.ComposeCommand(
+                            s.shulkerInvIndex(), s.boxSlot(), s.itemIndex(), true, s.count()));
+                }
+            }
+            ShulkerBoxOps.startCompose(commands, remaining, destInvIndex);
+        }
         return true;
     }
 
@@ -191,16 +207,26 @@ public final class BundlePanelInteraction {
                 ContainerInput.PICKUP, new Int2ObjectOpenHashMap<>(), HashedStack.EMPTY);
     }
 
-    private static int findEmptyPlayerSlot(Player player) {
-        // search main inventory (getSlotIndex 9-35) then hotbar (getSlotIndex 0-8)
+    /** Find an empty player inventory index (0-35); main inventory, then hotbar. */
+    private static int findEmptyPlayerInvIndex(Player player) {
         for (int pass = 0; pass < 2; pass++) {
             int min = (pass == 0) ? 9 : 0;
             int max = (pass == 0) ? 36 : 9;
-            for (Slot slot : player.containerMenu.slots) {
+            for (net.minecraft.world.inventory.Slot slot : player.containerMenu.slots) {
                 if (slot.container == player.getInventory() && !slot.hasItem()) {
                     int idx = slot.getContainerSlot();
-                    if (idx >= min && idx < max) return slot.index;
+                    if (idx >= min && idx < max) return idx;
                 }
+            }
+        }
+        return -1;
+    }
+
+    /** Map a player inventory index (0-35) to its slot index in the CURRENT open menu. */
+    private static int resolveInvIndexToMenuSlot(Player player, int inventoryIndex) {
+        for (net.minecraft.world.inventory.Slot s : player.containerMenu.slots) {
+            if (s.container == player.getInventory() && s.getContainerSlot() == inventoryIndex) {
+                return s.index;
             }
         }
         return -1;
